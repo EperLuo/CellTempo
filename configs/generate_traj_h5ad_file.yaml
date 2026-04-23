@@ -1,0 +1,71 @@
+# default: config values
+log_interval: 50 # log every n iterations; default 20 
+eval_itervals: 50 # 隔多少iter做一次eval; default 100 
+eval_iters: 1 # 一次eval多少个batch
+eval_cell_num: 4000 # 一次eval有多少个cell
+save_ckpt_iter: 50 # save a checkpoint every n iterations
+output_dir: /hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/generated
+comment: traj_h5ad 
+save_name: bonemarrow
+prefix_name:  null #ERX10019090
+sampling_num: 0 # using all sample
+
+# ckpt_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/velo_pretrain_ckpt_202511/traj_pretrain_ARold_lr1e4_vq_26c24d512b_new_70w_big_dp01_head_posnew/checkpoint-10000
+ckpt_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/backbone_ckpt/backbone_test/checkpoint-20
+
+# DDP settings
+backend: 'nccl' # 'nccl', 'gloo', etc.
+
+batch_size: 6
+block_size: 2000
+num_workers: 0
+eval_batch_size: 20
+
+# training dataset
+single_dataset_name: null
+data_types: [trajectory]
+data_folders: [/hpc-cache-pfs/home/bianhaiyang/veloMulan/dataHub/scBaseCount_scvelo_rowcount_filtered] #veloBD_lognorm_ver2    veloBD_rowcount
+dataset_names: [bonemarrow_full.h5ad] # scBasetraj_exp SRX11523687_top100.h5ad Forebrain_top100.h5ad velo3000 velo_test_loop   velo_dataset   
+meta_info_name: mix_meta_info_vq_traj.json #mix_meta_info_expanded.json
+mapping_dict: cell_id_mapping_dict.json #velo_mapping_dict.json
+global_dataset: bonemarrow_full.h5ad # scBasetraj_exp SRX11523687_top100.h5ad velo_dataset_all
+
+# vq_vae_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_26c24d_512n_new/checkpoint-700000/vqmodel
+vq_vae_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/vqvae_ckpt/vqvae_test/checkpoint-100/vqmodel
+
+max_new_tokens: 52
+
+train_mode: 'pretrain'
+
+# model
+n_embd: 1120 #240 #600 #1120
+n_head: 20 #6 #12 #20
+n_layer: 24 #6 #12 #24
+dropout: 0.0 # for pretraining 0 is good, for finetuning try 0.1+
+bias: False
+cell_pos_num: 21
+use_flash: False
+
+# adamw optimizer
+learning_rate: 4.0e-4 #  6.0e-4; max learning rate, 6.0 not 6 
+max_iters: 10000 # total number of training iterations
+max_epochs: 20 # total number of training epochs
+weight_decay: 1.0e-1
+beta1: 0.9
+beta2: 0.95
+grad_clip: 1.0 # clip gradients at this value, or disable if == 0.0
+
+
+# learning rate decay settings
+decay_lr: True # whether to decay the learning rate
+warmup_iters: 100 # how many steps to warm up for
+lr_decay_iters: 8000 # should be ~= max_iters per Chinchilla
+min_lr: 3.0e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+
+# system
+device: 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
+dtype: 'bfloat16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
+
+# wandb logging
+wandb_log: True # disabled by default
+wandb_project: 'velomulan'

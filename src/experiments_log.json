@@ -1,0 +1,23 @@
+[
+    {
+        "comment": "testset_scbasetraj",
+        "dataset_names": [
+            "scBasetraj_exp"
+        ],
+        "ckpt_path": "/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/backbone_ckpt/backbone_test/checkpoint-20"
+    },
+    {
+        "comment": "testset_scbasetraj",
+        "dataset_names": [
+            "scBasetraj_exp"
+        ],
+        "ckpt_path": "/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/backbone_ckpt/backbone_test/checkpoint-20"
+    },
+    {
+        "comment": "traj_h5ad",
+        "dataset_names": [
+            "bonemarrow_full.h5ad"
+        ],
+        "ckpt_path": "/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/backbone_ckpt/backbone_test/checkpoint-20"
+    }
+]
