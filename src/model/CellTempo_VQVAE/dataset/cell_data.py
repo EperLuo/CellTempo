@@ -11,11 +11,11 @@ from loguru import logger
 from tqdm import tqdm
 
 def load_and_concatenate_shards(parent_dir: str, expect_features=None):
-    """读取分片并合并成一个 Dataset（零拷贝合并）"""
+    """Load shards and concatenate into a single Dataset (zero-copy merge)."""
     dirs = [d for d in glob.glob(os.path.join(parent_dir, "part_*")) if os.path.isdir(d)]
     if not dirs:
         raise FileNotFoundError(f"No shards under {parent_dir}")
-    # 按编号排序
+    # sort by shard index
     import re as _re
     dirs = sorted(dirs, key=lambda p: int(_re.search(r"part_(\d+)", p).group(1)))
     # parts = [load_from_disk(p) for p in tqdm(dirs, desc="Loading datasets")]
@@ -49,23 +49,23 @@ def load_data(
 
 def filter_by_names(dataset, dataset_names, train_flag=True, num_proc=8, batch_size=100_000):
     """
-    dataset: Dataset 或 DatasetDict（若是 DatasetDict，则对每个 split 过滤）
-    dataset_names: 要“保留为测试集”的数据集名列表
-    train_flag: True 取训练集（not in 名单），False 取测试集（in 名单）
-    num_proc: 并行进程数
-    batch_size: batched 过滤时的批大小（可按内存调）
+    dataset: Dataset or DatasetDict (if DatasetDict, each split is filtered separately).
+    dataset_names: list of dataset names to reserve as the test set.
+    train_flag: True selects the training set (not in list), False selects the test set (in list).
+    num_proc: number of parallel processes.
+    batch_size: batch size for batched filtering (adjust based on available memory).
     """
     names = set(dataset_names)
 
     def keep_batch(batch):
-        # 向量化判断，返回布尔列表
+        # vectorized boolean check
         if train_flag:
             return [nm.split('/')[-1] not in names for nm in batch]
         else:
             return [nm.split('/')[-1] in names for nm in batch]
 
     if isinstance(dataset, DatasetDict):
-        # 对每个 split 分别过滤
+        # filter each split separately
         return DatasetDict({
             split: ds.filter(
                 keep_batch, input_columns=["dataset_name"],
@@ -75,7 +75,7 @@ def filter_by_names(dataset, dataset_names, train_flag=True, num_proc=8, batch_s
             for split, ds in dataset.items()
         })
     else:
-        # 单个 Dataset
+        # single Dataset
         return dataset.filter(
             keep_batch, input_columns=["dataset_name"],
             batched=True, batch_size=batch_size,
@@ -83,12 +83,12 @@ def filter_by_names(dataset, dataset_names, train_flag=True, num_proc=8, batch_s
         )
 
 
-class mixDataTypeTargetDataset_scbasecount(Dataset): # DatasetList里可以给多个huggingface dataset
-    ## 目前兼容： Velocity ✅，scperturb✅
-    ## 对于第二个细胞，我不再使用全长基因，而是只把Top 100的 genes 放进去。
-    ## 解决从哪儿获取Top 100 list的问题。✅
-    ## FIXME 这样其实只兼容perturbation任务，不兼容velocity了，但也可以先都做完预训练，然后再做这个。
-    ## FIXME 给中间连接token加上positional encoding，这样就可以区分前后了。不然第二个cell不知道要按什么顺序生成。
+class mixDataTypeTargetDataset_scbasecount(Dataset): # Accepts multiple HuggingFace datasets
+    ## Currently compatible: Velocity ✅, scperturb ✅
+    ## For the second cell, only the Top 100 genes are used instead of the full gene set.
+    ## Resolved: how to obtain the Top 100 gene list. ✅
+    ## FIXME: currently only compatible with perturbation tasks, not velocity; pre-training can come first.
+    ## FIXME: add positional encoding to inter-cell tokens so order is preserved between cells.
 
     def __init__(self,
                  data_folders: list = ['path1','path2'],
@@ -96,11 +96,11 @@ class mixDataTypeTargetDataset_scbasecount(Dataset): # DatasetList里可以给�
                  crop_train_length: int = 6000,
                  n_express_level: int = 10,
                  meta_info_name: str = 'mix_meta_info.json',
-                 mapping_dict: str = 'velo_mapping_dict.json', # 只有velocity需要这个，来globally找next cell
+                 mapping_dict: str = 'velo_mapping_dict.json', # only needed for velocity; used to find next cell globally
                  mode: str = 'train',
-                 global_dataset: str = 'velo_dataset_all', # 只有velocity需要这个，来globally找next cell
+                 global_dataset: str = 'velo_dataset_all', # only needed for velocity; used to find next cell globally
                  bin_type: str = 'cell_cell_dep', # cell_cell_dep for related bin; cell_ind for individual bin
-                 data_types: list = ['velocity','perturb'], # sc-rna, velocity, perturb
+                 data_types: list = ['velocity','perturb'], # supported types: sc-rna, velocity, perturb
                  mix_ratio: list = [1.0],
                  topGene_table_path: str = '/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/mixMulan/debug/topGenes_three_sections/',
                  topDEGs_num: list = [20],
@@ -111,7 +111,7 @@ class mixDataTypeTargetDataset_scbasecount(Dataset): # DatasetList里可以给�
                 ):
         
         self.datasets = []
-        # 生成dataset 所有数据集处理
+        # generate dataset — process all datasets
         with open("/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/mixMulan_AR_traj/build_dataset/train_list.txt", "r", encoding="utf-8") as f:
             train_samples = [line.strip() for line in f]
 
@@ -125,7 +125,7 @@ class mixDataTypeTargetDataset_scbasecount(Dataset): # DatasetList里可以给�
             self.datasets.append(filter_by_names(dataset, dataset_names=chosen_data, train_flag=False,  num_proc=4))
 
         self.mix_ratio = mix_ratio
-        # 初始化每个数据集的长度，方便索引
+        # initialise dataset lengths for indexing
         self.dataset_lengths = [len(ds) for ds in self.datasets]
         self.total_length = sum(self.dataset_lengths)
         self.reference_gene = pd.read_csv('/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/mixMulan/trainer/OS_scRNA_gene_index.18791.tsv',sep='\t')['gene_name'].values #19264

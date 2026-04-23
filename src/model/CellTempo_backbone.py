@@ -97,7 +97,7 @@ class CausalSelfAttention(nn.Module):
         # Attention computation
         if self.flash:
             if attention_mask is None:
-                # 没有attention_mask，直接依赖is_causal=True实现因果掩码
+                # no attention_mask; rely on is_causal=True for causal masking
                 y = torch.nn.functional.scaled_dot_product_attention(
                     q, k, v,
                     attn_mask=None,
@@ -108,14 +108,14 @@ class CausalSelfAttention(nn.Module):
             else:
                 causal_mask = torch.tril(torch.ones((T, T), dtype=torch.bool, device=x.device))
                 
-                # 将attention_mask扩展到(B,T,T)，使其既包含padding屏蔽，又能与因果mask相"与"
+                # expand attention_mask to (B,T,T) to include padding mask and AND with causal mask
                 extended_attn_mask = attention_mask[:, None, :].expand(B, T, T)  # (B,T,T)
                 final_mask = extended_attn_mask & causal_mask.unsqueeze(0)  # (B,T,T)
 
-                # 再扩展到(B, h, T, T), 这里h=1因为mask对每个头相同
+                # further expand to (B, h, T, T); h=1 because mask is shared across heads
                 final_mask = final_mask.unsqueeze(1)  # (B,1,T,T)
 
-                # 使用combined mask，并且is_causal=False，因为我们手动实现了因果性
+                # use combined mask with is_causal=False since causality is handled manually
                 y = torch.nn.functional.scaled_dot_product_attention(
                     q, k, v,
                     attn_mask=final_mask,

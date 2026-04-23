@@ -35,7 +35,7 @@ from scipy.stats import spearmanr
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
 
-# ---- optional: pygam（若未安装会自动跳过） ----
+# ---- optional: pygam (skipped automatically if not installed) ----
 _HAVE_GAM = False
 try:
     from pygam import LinearGAM, s
@@ -47,15 +47,16 @@ from collections import defaultdict
 
 def group_by_step_unique_first(trajectories):
     """
-    对于每个 cell_id，在所有轨迹中保留它 time_step(轨迹中的位置索引) 最小的那一次出现，
-    然后按原始 time_step 分组。
+    For each cell_id, keep only the occurrence with the smallest time_step
+    (trajectory position index) across all trajectories, then group by the
+    original time_step.
 
     trajectories: List[List[cell_id]]
 
-    返回:
+    Returns:
       grouped_nonempty: [[cell_ids at step s0], [cell_ids at step s1], ...]
-      steps_sorted:     [s0, s1, ...]  对应的原始 step 索引
-      first_pos:        {cell_id: (traj_idx, step_idx)} 方便你调试或复用
+      steps_sorted:     [s0, s1, ...]  corresponding original step indices
+      first_pos:        {cell_id: (traj_idx, step_idx)}  for debugging / reuse
     """
     first_pos = {}  # cell_id -> (traj_idx, step_idx)
 
@@ -64,7 +65,7 @@ def group_by_step_unique_first(trajectories):
             if cell_id not in first_pos or step_idx < first_pos[cell_id][1]:
                 first_pos[cell_id] = (traj_idx, step_idx)
 
-    # 按 step_idx 分组
+    # group by step_idx
     step_to_cells = defaultdict(list)
     for cell_id, (_t, step_idx) in first_pos.items():
         step_to_cells[step_idx].append(cell_id)
@@ -76,17 +77,17 @@ def group_by_step_unique_first(trajectories):
 
 def group_by_step_unique_last(trajectories):
     """
-    对于每个 cell_id，在所有轨迹中保留它 time_step 最大的那一次出现，
-    然后按原始 time_step 分组。
+    For each cell_id, keep only the occurrence with the largest time_step
+    across all trajectories, then group by the original time_step.
 
-    返回:
-      grouped_nonempty, steps_sorted, last_pos 同上
+    Returns:
+      grouped_nonempty, steps_sorted, last_pos — same structure as above
     """
     last_pos = {}  # cell_id -> (traj_idx, step_idx)
 
     for traj_idx, traj in enumerate(trajectories):
         for step_idx, cell_id in enumerate(traj):
-            # 只保留 step_idx 最大的那次
+            # keep only the occurrence with the largest step_idx
             if cell_id not in last_pos or step_idx > last_pos[cell_id][1]:
                 last_pos[cell_id] = (traj_idx, step_idx)
 
@@ -99,11 +100,11 @@ def group_by_step_unique_last(trajectories):
     return grouped_nonempty, steps_sorted, last_pos
 
 def load_and_concatenate_shards(parent_dir: str, expect_features=None):
-    """读取分片并合并成一个 Dataset（零拷贝合并）"""
+    """Load shards and concatenate into a single Dataset (zero-copy merge)."""
     dirs = [d for d in glob.glob(os.path.join(parent_dir, "part_*")) if os.path.isdir(d)]
     if not dirs:
         raise FileNotFoundError(f"No shards under {parent_dir}")
-    # 按编号排序
+    # sort by shard index
     import re as _re
     dirs = sorted(dirs, key=lambda p: int(_re.search(r"part_(\d+)", p).group(1)))
 
@@ -111,7 +112,7 @@ def load_and_concatenate_shards(parent_dir: str, expect_features=None):
 
     return concatenate_datasets(parts)
 
-# 用来找next cell
+# used to find the next cell
 def get_next_cell_velo(idx_num, global_dataset):
 
     if idx_num is None:
@@ -124,7 +125,7 @@ def get_next_cell_velo(idx_num, global_dataset):
 
     return gene_names, expr_values
 
-# 将生成的基因和所有reference基因对齐
+# align generated genes to the reference gene panel
 def align_expression_to_reference(gene_lists, expression_lists, reference_genes):
     ref_index = {gene: idx for idx, gene in enumerate(reference_genes)}
     aligned_results = []
@@ -141,7 +142,7 @@ def align_expression_to_reference(gene_lists, expression_lists, reference_genes)
 
 
 def knn_preservation(X_ref, X_code, k=20, metric_ref='euclidean', metric_code='hamming'):
-    """计算 kNN 邻居保持率"""
+    """Compute the kNN neighbour preservation rate."""
     nbr_ref = NearestNeighbors(n_neighbors=k, metric=metric_ref).fit(X_ref)
     nbr_code = NearestNeighbors(n_neighbors=k, metric=metric_code).fit(X_code)
     idx_ref = nbr_ref.kneighbors(return_distance=False)
@@ -151,8 +152,8 @@ def knn_preservation(X_ref, X_code, k=20, metric_ref='euclidean', metric_code='h
 
 
 def distance_correlation(X_ref, X_code, metric_ref='euclidean', metric_code='hamming', subsample=2000):
-    """计算 pairwise 距离相关性 (全局结构保持性)"""
-    # 为避免过大样本导致内存问题，支持随机抽样
+    """Compute pairwise distance correlation (global structure preservation)."""
+    # subsample to avoid excessive memory usage
     if X_ref.shape[0] > subsample:
         idx = np.random.choice(X_ref.shape[0], subsample, replace=False)
         X_ref = X_ref[idx]
@@ -164,9 +165,9 @@ def distance_correlation(X_ref, X_code, metric_ref='euclidean', metric_code='ham
 
 
 def cluster_consistency(X_ref, X_code, n_clusters=10, metric_code='hamming'):
-    """计算聚类一致性（ARI/NMI）"""
+    """Compute clustering consistency (ARI/NMI)."""
     kmeans_ref = KMeans(n_clusters=n_clusters, random_state=0).fit(X_ref)
-    # 在 code 空间里聚类时，用汉明距离可先one-hot或直接用整数表示
+    # when clustering in code space, use Hamming distance (one-hot or integer representation)
     kmeans_code = KMeans(n_clusters=n_clusters, random_state=0).fit(X_code)
     ari = adjusted_rand_score(kmeans_ref.labels_, kmeans_code.labels_)
     nmi = normalized_mutual_info_score(kmeans_ref.labels_, kmeans_code.labels_)
@@ -177,17 +178,17 @@ def evaluate_all(X_orig, X_code, labels=None, n_clusters=10, k=20):
     print("==== Evaluating VQ-VAE code structure ====")
     results = {}
 
-    # kNN 保持率
+    # kNN preservation rate
     knn_rate = knn_preservation(X_orig, X_code, k=k)
     results["kNN_preservation"] = knn_rate
     print(f"[1] kNN preservation rate: {knn_rate:.4f}")
 
-    # 距离相关性
+    # distance correlation
     dist_corr = distance_correlation(X_orig, X_code)
     results["distance_correlation"] = dist_corr
     print(f"[2] Distance correlation: {dist_corr:.4f}")
 
-    # 聚类一致性
+    # clustering consistency
     ari, nmi = cluster_consistency(X_orig, X_code, n_clusters=n_clusters)
     results["ARI"] = ari
     results["NMI"] = nmi
@@ -198,7 +199,7 @@ def evaluate_all(X_orig, X_code, labels=None, n_clusters=10, k=20):
     results["trustworthiness"] = trust
     print(f"[4] Trustworthiness: {trust:.4f}")
 
-    # 若提供标签，可计算标签-聚类一致性
+    # if labels are provided, also compute label-to-cluster consistency
     if labels is not None:
         labels = np.array(labels)
         km_code = KMeans(n_clusters=len(np.unique(labels)), random_state=0).fit(X_code)
@@ -214,23 +215,23 @@ def evaluate_all(X_orig, X_code, labels=None, n_clusters=10, k=20):
 
 def guassian_kernel(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
     '''
-    将源域数据和目标域数据转化为核矩阵, 即上文中的K
-    Params: 
-	    source: 源域数据(n * len(x))
-	    target: 目标域数据(m * len(y))
-	    kernel_mul: 
-	    kernel_num: 取不同高斯核的数量
-	    fix_sigma: 不同高斯核的sigma值
+    Convert source and target domain data into a kernel matrix K.
+    Params:
+	    source: source domain data (n * len(x))
+	    target: target domain data (m * len(y))
+	    kernel_mul:
+	    kernel_num: number of different Gaussian kernels
+	    fix_sigma: sigma values for the Gaussian kernels
 	Return:
-		sum(kernel_val): 多个核矩阵之和
+		sum(kernel_val): sum of multiple kernel matrices
     '''
-    n_samples = int(source.size()[0])+int(target.size()[0])# 求矩阵的行数，一般source和target的尺度是一样的，这样便于计算
-    total = torch.cat([source, target], dim=0)#将source,target按列方向合并
-    #将total复制（n+m）份
+    n_samples = int(source.size()[0])+int(target.size()[0])# total number of rows; source and target are typically the same size
+    total = torch.cat([source, target], dim=0)# concatenate source and target along columns
+    # tile total (n+m) times
     total0 = total.unsqueeze(0).expand(int(total.size(0)), int(total.size(0)), int(total.size(1)))
-    #将total的每一行都复制成（n+m）行，即每个数据都扩展成（n+m）份
+    # expand each row of total to (n+m) rows
     total1 = total.unsqueeze(1).expand(int(total.size(0)), int(total.size(0)), int(total.size(1)))
-    #求任意两个数据之间的和，得到的矩阵中坐标（i,j）代表total中第i行数据和第j行数据之间的l2 distance(i==j时为0）
+    # pairwise L2 distances; entry (i,j) = L2 distance between row i and row j of total (0 when i==j)
     
     batch_size = 200
     num_window = int(total0.shape[0]/batch_size)+1
@@ -243,41 +244,41 @@ def guassian_kernel(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None
 
     # L2_distance = ((total0-total1)**2).sum(2) 
 
-    #调整高斯核函数的sigma值
+    # set the bandwidth (sigma) for the Gaussian kernel
     if fix_sigma:
         bandwidth = fix_sigma
     else:
         bandwidth = torch.sum(L2_distance.data) / (n_samples**2-n_samples)
-    #以fix_sigma为中值，以kernel_mul为倍数取kernel_num个bandwidth值（比如fix_sigma为1时，得到[0.25,0.5,1,2,4]
+    # take kernel_num bandwidth values centred on fix_sigma with multiplier kernel_mul (e.g. [0.25,0.5,1,2,4] when fix_sigma=1)
     bandwidth /= kernel_mul ** (kernel_num // 2)
     bandwidth_list = [bandwidth * (kernel_mul**i) for i in range(kernel_num)]
-    #高斯核函数的数学表达式
+    # Gaussian kernel function
     kernel_val = [torch.exp(-L2_distance / bandwidth_temp) for bandwidth_temp in bandwidth_list]
-    #得到最终的核矩阵
+    # produce the final kernel matrix
     return sum(kernel_val)#/len(kernel_val)
 
 def mmd_rbf(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
     '''
-    计算源域数据和目标域数据的MMD距离
-    Params: 
-	    source: 源域数据(n * len(x))
-	    target: 目标域数据(m * len(y))
-	    kernel_mul: 
-	    kernel_num: 取不同高斯核的数量
-	    fix_sigma: 不同高斯核的sigma值
+    Compute the MMD distance between source and target domain data.
+    Params:
+	    source: source domain data (n * len(x))
+	    target: target domain data (m * len(y))
+	    kernel_mul:
+	    kernel_num: number of different Gaussian kernels
+	    fix_sigma: sigma values for the Gaussian kernels
 	Return:
 		loss: MMD loss
     '''
-    batch_size = int(source.size()[0])#一般默认为源域和目标域的batchsize相同
+    batch_size = int(source.size()[0])# source and target are typically the same batch size
     kernels = guassian_kernel(source, target,
         kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
-    #根据式（3）将核矩阵分成4部分
+    # split the kernel matrix into 4 blocks following equation (3)
     XX = kernels[:batch_size, :batch_size]
     YY = kernels[batch_size:, batch_size:]
     XY = kernels[:batch_size, batch_size:]
     YX = kernels[batch_size:, :batch_size]
     loss = torch.mean(XX + YY - XY -YX)
-    return loss#因为一般都是n==m，所以L矩阵一般不加入计算
+    return loss# the L matrix is typically omitted because n==m
 
 def MMD(adata):
     real = adata[adata.obs['batch']=='true_Cell'].obsm['X_pca']
@@ -300,37 +301,37 @@ def random_forest(adata, return_roc = False):
     data = np.concatenate((real,sim),axis=0)
     label = np.concatenate((np.ones((real.shape[0])),np.zeros((sim.shape[0]))))
 
-    ##将训练集切分为训练集和验证集
+    # split into training and validation sets
     X_train,X_val,y_train,y_val = train_test_split(data, label,
                                                 test_size = 0.25,random_state = 1)
 
-    ## 使用随机森林对数据进行分类
-    rfc1 = RandomForestClassifier(n_estimators = 1000, # 树的数量
-                                max_depth= 5,       # 子树最大深度
+    # classify with Random Forest
+    rfc1 = RandomForestClassifier(n_estimators = 1000, # number of trees
+                                max_depth= 5,       # max depth of each tree
                                 oob_score=True,
                                 class_weight = "balanced",
                                 random_state=1)
     rfc1.fit(X_train,y_train)
 
-    ## 可视化在验证集上的Roc曲线
+    # ROC curve on the validation set
     pre_y = rfc1.predict_proba(X_val)[:, 1]
     fpr_Nb, tpr_Nb, _ = roc_curve(y_val, pre_y)
-    aucval = auc(fpr_Nb, tpr_Nb)    # 计算auc的取值
+    aucval = auc(fpr_Nb, tpr_Nb)    # compute AUC
     if return_roc:
         return aucval, fpr_Nb, tpr_Nb
     return aucval
 
 
 def calculate_mse(array):
-    # 得到数组的第一个维度大小
+    # get the size of the first dimension
     n, h, w, d = array.shape
     
-    # 初始化存储结果的数组
+    # initialise result array
     mse_values = np.zeros((n - 1, h))
     
-    # 逐对计算前后张量的MSE
+    # compute MSE between each consecutive pair of tensors
     for i in range(1, n):
-        # 计算相邻两个张量之间每个位置的MSE
+        # compute per-position MSE between adjacent tensors
         mse = np.mean((array[i] - array[i - 1]) ** 2, axis=(1, 2))
         mse_values[i - 1] = mse
     
@@ -339,31 +340,31 @@ def calculate_mse(array):
 
 def map_adata_to_reference_genes(adata, ref_genes):
     """
-    将 adata 的基因映射到参考基因列表 ref_genes 上。
-    - 如果基因缺失，则补零列。
-    - 如果有多余基因，则会被去除。
-    - 输出的 adata.var 会按 ref_genes 顺序排列。
+    Map genes in adata to the reference gene list ref_genes.
+    - Missing genes are zero-padded.
+    - Extra genes are dropped.
+    - Output adata.var follows the order of ref_genes.
 
-    参数:
-        adata: AnnData 对象
-        ref_genes: list[str]，参考基因列表（目标基因顺序）
-    返回:
-        一个新的 AnnData 对象
+    Args:
+        adata: AnnData object.
+        ref_genes: list[str], reference gene list (target gene order).
+    Returns:
+        A new AnnData object.
     """
-    # 现有基因名
+    # existing gene names
     current_genes = np.array(adata.var_names)
 
-    # 找出交集和索引映射
+    # find intersection and index mapping
     intersect_genes = np.intersect1d(current_genes, ref_genes)
     missing_genes = [g for g in ref_genes if g not in current_genes]
 
     print(f"✅ {len(intersect_genes)} genes matched, "
           f"{len(missing_genes)} missing from adata.")
 
-    # 取出交集基因的表达矩阵
+    # extract expression matrix for intersecting genes
     adata_aligned = adata[:, intersect_genes].copy()
 
-    # 如果存在缺失基因，用0填充这些列
+    # zero-pad missing genes
     if missing_genes:
         import scipy.sparse as sp
         n_cells = adata_aligned.n_obs
@@ -374,7 +375,7 @@ def map_adata_to_reference_genes(adata, ref_genes):
         adata_missing.obs_names = adata_aligned.obs_names
         adata_aligned = ad.concat([adata_aligned, adata_missing], axis=1)
 
-    # 按 ref_genes 顺序重新排列
+    # reorder to match ref_genes order
     adata_aligned = adata_aligned[:, ref_genes].copy()
     adata_aligned.obs = adata.obs
 
@@ -382,29 +383,29 @@ def map_adata_to_reference_genes(adata, ref_genes):
 
 
 from scipy.stats import pearsonr,entropy
-# ---------------------- CellTypist 轨迹成分分析一条龙 ----------------------
+# ---------------------- CellTypist end-to-end trajectory composition analysis ----------------------
 
-# ========== 1) 配置 ==========
-# 选择一个模型（可换成 'Immune_All_High.pkl' / 'Immune_All_Low.pkl' / 'Pan_fetal_cell.pkl' 等）
-CELLTYPIST_MODEL = 'Immune_All_Low.pkl'   # 根据你的数据领域更换
+# ========== 1) Configuration ==========
+# choose a model (can be 'Immune_All_High.pkl' / 'Immune_All_Low.pkl' / 'Pan_fetal_cell.pkl', etc.)
+CELLTYPIST_MODEL = 'Immune_All_Low.pkl'   # change according to your data domain
 
-# ========== 2) 工具函数 ==========
+# ========== 2) Utility functions ==========
 def ensure_step_col(adata, prefer=('step', 'time_step')):
     for k in prefer:
         if k in adata.obs.columns:
             return k
-    raise KeyError(f"找不到 step 列，请在 adata.obs 中提供 {prefer} 任一列。")
+    raise KeyError(f"Cannot find step column; please provide one of {prefer} in adata.obs.")
 
 def run_celltypist(adata, model_name='Immune_All_Low.pkl', majority_voting=True, label_col='cell_type'):
     """
-    用 CellTypist 注释，结果写入 adata.obs[label_col]
-    model_name 可以是模型文件名或模型路径
+    Annotate with CellTypist; results written to adata.obs[label_col].
+    model_name can be a model filename or a full path.
     """
-    # 下载／确保模型存在
+    # download / ensure the model is available
     models.download_models(model=[model_name], force_update=False)
-    # 加载模型
+    # load model
     model = models.Model.load(model=model_name)
-    # 注释
+    # annotate
     result = annotate(adata, model=model, majority_voting=majority_voting)
     if hasattr(result, 'predicted_labels_majority_voting'):
         adata.obs[label_col] = result.predicted_labels['majority_voting']
@@ -414,7 +415,7 @@ def run_celltypist(adata, model_name='Immune_All_Low.pkl', majority_voting=True,
 
 def comp_by_step(adata, step_col, type_col='cell_type'):
     """
-    计算每个 step 的细胞类型组成（行=step，列=cell_type，值=比例）
+    Compute cell-type composition per step (rows=step, columns=cell_type, values=proportion).
     """
     comp = (
         adata.obs
@@ -427,14 +428,14 @@ def comp_by_step(adata, step_col, type_col='cell_type'):
 
 def align_columns(a: pd.DataFrame, b: pd.DataFrame):
     """
-    统一两张成分表的列（cell types 的并集），缺失补0并按列名排序
+    Align columns of two composition DataFrames (union of cell types), fill missing with 0, sort by column name.
     """
     cols = sorted(set(a.columns) | set(b.columns))
     return a.reindex(columns=cols, fill_value=0.0), b.reindex(columns=cols, fill_value=0.0)
 
 def jensen_shannon(p: np.ndarray, q: np.ndarray) -> float:
     """
-    JSD(p||q)，要求 p、q 为概率分布（和为1），内部做数值稳定性处理
+    JSD(p||q). p and q must be probability distributions (sum to 1); numerical stability handled internally.
     """
     p = np.clip(p, 1e-12, 1.0); p = p / p.sum()
     q = np.clip(q, 1e-12, 1.0); q = q / q.sum()
@@ -443,11 +444,11 @@ def jensen_shannon(p: np.ndarray, q: np.ndarray) -> float:
 
 def compare_composition(comp_real: pd.DataFrame, comp_gen: pd.DataFrame):
     """
-    返回：
-      - jsd: 每个 step 的 JSD
-      - diff: 组成差(comp_gen - comp_real)，用于热图
+    Returns:
+      - jsd: JSD per step
+      - diff: composition difference (comp_gen - comp_real) for heatmaps
     """
-    # 只比较都有的 step（也可改成并集后缺失补0）
+    # compare only steps present in both datasets (can be changed to union with zero-fill)
     steps = comp_real.index.intersection(comp_gen.index)
     comp_r = comp_real.loc[steps]
     comp_g = comp_gen.loc[steps]
@@ -456,7 +457,7 @@ def compare_composition(comp_real: pd.DataFrame, comp_gen: pd.DataFrame):
         {s: jensen_shannon(comp_r.loc[s].values, comp_g.loc[s].values) for s in steps},
         name='JSD'
     )
-    # 差异矩阵（gen - real）
+    # difference matrix (gen - real)
     diff = (comp_g - comp_r).rename_axis('step')
     return jsd.sort_index(), diff.sort_index()
 
@@ -470,7 +471,7 @@ def stacked_bar(
 ):
     df_plot = df.copy()
 
-    # --------- 合并占比小的列 ---------
+    # --------- merge low-proportion columns ---------
     if min_frac is not None:
         col_max = df_plot.max(axis=0)
         major = col_max[col_max >= min_frac].index
@@ -481,13 +482,13 @@ def stacked_bar(
             df_major[other_name] = df_plot[minor].sum(axis=1)
             df_plot = df_major
 
-    # （可选）按均值排序
+    # (optional) sort by column mean
     df_plot = df_plot[df_plot.mean(axis=0).sort_values(ascending=False).index]
 
-    # --------- 关键：按列名取固定颜色 ---------
+    # --------- key: assign fixed colours by column name ---------
     colors = [color_map[c] for c in df_plot.columns]
 
-    # --------- 绘图 ---------
+    # --------- plotting ---------
     fig, ax = plt.subplots(figsize=(10, 6))
     df_plot.plot(
         kind="bar",
@@ -514,11 +515,11 @@ def stacked_bar(
 
 def heatmap_diff(diff: pd.DataFrame, vcenter=0.0, vmax=None, title='Composition difference (gen - real)'):
     """
-    简易热图（正值表示生成数据相对真实更高的类型占比）
+    Simple heatmap (positive values indicate higher cell-type proportion in generated vs. real data).
     """
     import matplotlib.colors as mcolors
     vmax = vmax or np.max(np.abs(diff.values))
-    cmap = plt.get_cmap('bwr')  # 蓝白红，白色为0
+    cmap = plt.get_cmap('bwr')  # blue-white-red; white = 0
     norm = mcolors.TwoSlopeNorm(vmin=-vmax, vcenter=vcenter, vmax=vmax)
 
     plt.figure(figsize=(max(8, diff.shape[1]*0.4), max(8, diff.shape[0]*0.3)))
@@ -532,16 +533,16 @@ def heatmap_diff(diff: pd.DataFrame, vcenter=0.0, vmax=None, title='Composition 
 
 def run_celltypist_by_step(adata, step_col, model_name, label_col='cell_type'):
     """
-    在同一个 AnnData 上，按 step 分组分别跑 celltypist，
-    然后把每个 step 的预测 label 写回 adata.obs[label_col].
+    Run CellTypist separately for each step group on the same AnnData object,
+    then write the predicted labels back to adata.obs[label_col].
 
-    这里强制把 label_col 用 object/string 类型存储，避免 pandas Categorical 冲突。
+    label_col is stored as object/string type to avoid pandas Categorical conflicts.
     """
-    # 先创建一列空的 object 列，避免后面 Categorical 类型不兼容
+    # pre-create an empty object column to avoid Categorical type incompatibility later
     if label_col not in adata.obs.columns:
         adata.obs[label_col] = pd.Series(index=adata.obs_names, dtype="object")
     else:
-        # 如果已经是 Categorical，先转成 object
+        # if already Categorical, convert to object first
         if pd.api.types.is_categorical_dtype(adata.obs[label_col].dtype):
             adata.obs[label_col] = adata.obs[label_col].astype("object")
 
@@ -560,21 +561,21 @@ def run_celltypist_by_step(adata, step_col, model_name, label_col='cell_type'):
         sub = adata[mask].copy()
         run_celltypist(sub, model_name=model_name, label_col=label_col)
 
-        # 把子集的预测结果转成字符串再写回去，避免带着 Categorical 类型
+        # convert subset predictions to str before writing back, to avoid carrying Categorical type
         adata.obs.loc[sub.obs_names, label_col] = sub.obs[label_col].astype(str).values
-# ========== 3) 主流程（把你的 AnnData 放进来） ==========
+# ========== 3) Main pipeline (pass your AnnData here) ==========
 def celltype_composition_pipeline(adata_real, adata_gen,
                                   model_name=CELLTYPIST_MODEL,
                                   step_candidates=('step', 'time_step'),
                                   type_col='cell_type',
                                   export_prefix=None):
     """
-    一次性跑：
-      - 注释真实/生成数据的 cell type
-      - 计算每 step 的类型组成
-      - 计算每 step 的 JSD & 组成差
-      - 画图（堆叠柱、差异热图）
-      - （可选）导出 CSV
+    All-in-one pipeline:
+      - Annotate cell types in real/generated data
+      - Compute per-step type composition
+      - Compute per-step JSD and composition difference
+      - Plot (stacked bar, difference heatmap)
+      - (Optional) export CSV files
     """
     sc.pp.normalize_total(adata_real, 1e4)
     sc.pp.log1p(adata_real)
@@ -582,13 +583,13 @@ def celltype_composition_pipeline(adata_real, adata_gen,
     sc.pp.log1p(adata_gen)
 
 
-    # 选择 step 列
+    # select step column
     step_r = ensure_step_col(adata_real, step_candidates)
     step_g = ensure_step_col(adata_gen,  step_candidates)
     if step_r != step_g:
-        print(f"[WARN] 真实与生成的 step 列名不同：real={step_r}, gen={step_g}，后续会各自取列并在交集 step 上比较。")
+        print(f"[WARN] Real and generated datasets have different step column names: real={step_r}, gen={step_g}. Comparing over intersecting steps.")
 
-    # 注释
+    # annotate
     print("[CellTypist] Annotating REAL ...")
     # run_celltypist(adata_real, model_name=model_name, label_col=type_col)
     run_celltypist_by_step(adata_real, step_col=step_r,
@@ -598,15 +599,15 @@ def celltype_composition_pipeline(adata_real, adata_gen,
     run_celltypist_by_step(adata_gen,  step_col=step_g,
                            model_name=model_name, label_col=type_col)
 
-    # 组成
+    # composition
     comp_real = comp_by_step(adata_real, step_col=step_r, type_col=type_col)
     comp_gen  = comp_by_step(adata_gen,  step_col=step_g, type_col=type_col)
     comp_real, comp_gen = align_columns(comp_real, comp_gen)
 
-    # 对比
+    # comparison
     jsd, diff = compare_composition(comp_real, comp_gen)
 
-    # # 打印 top 差异 step
+    # # print top differing steps
     # print("\n[Summary] Top-10 steps by JSD (higher = more different):")
     # print(jsd.sort_values(ascending=False).head(10))
     from matplotlib import cm
@@ -615,7 +616,7 @@ def celltype_composition_pipeline(adata_real, adata_gen,
         cmap = cm.get_cmap(cmap_name, len(categories))
         return {cat: cmap(i) for i, cat in enumerate(categories)}
 
-    # --------- 合并占比小的列 ---------
+    # --------- merge low-proportion columns ---------
     min_frac = 0.05
     df_plot = comp_real
     col_max = df_plot.max(axis=0)
@@ -643,7 +644,7 @@ def celltype_composition_pipeline(adata_real, adata_gen,
         
     COLOR_MAP = make_color_map(all_categories)
 
-    # 画图
+    # plotting
     stacked_bar(
         comp_real,
         title='Real: cell type composition per step',
@@ -661,15 +662,15 @@ def celltype_composition_pipeline(adata_real, adata_gen,
     # stacked_bar(comp_gen,  title='Generated: cell type composition per step', save_path='/'.join(export_prefix.split('/')[:-1]))
     heatmap_diff(diff, title='Composition difference (gen - real)')
 
-    # 可选导出
+    # optional export
     if export_prefix:
         comp_real.to_csv(f"{export_prefix}_composition_real.csv")
         comp_gen.to_csv(f"{export_prefix}_composition_gen.csv")
         jsd.to_csv(f"{export_prefix}_JSD_by_step.csv")
         diff.to_csv(f"{export_prefix}_composition_diff_gen_minus_real.csv")
-        print(f"[Export] 已导出到前缀 {export_prefix}_*.csv")
+        print(f"[Export] Exported to prefix {export_prefix}_*.csv")
 
-    # 返回结果，方便后续自定义分析
+    # return results for further custom analysis
     return {
         "comp_real": comp_real,
         "comp_gen": comp_gen,
@@ -685,7 +686,7 @@ def _get_X_dense(adata, layer=None):
     return np.asarray(X.toarray() if hasattr(X, "toarray") else X, dtype=float)
 
 def _time_to_numeric_and_levels(ser):
-    """将 time_step 转成数值 codes，并返回有序 levels（用于对齐两个 adata 的时间点）"""
+    """Convert time_step to numeric codes and return ordered levels (for aligning time points between two adata objects)."""
     s = ser.copy()
     if pd.api.types.is_numeric_dtype(s):
         codes = s.values.astype(float)
@@ -700,24 +701,24 @@ def _time_to_numeric_and_levels(ser):
     return codes, pd.Index(levels)
 
 def _align_time_levels(adata_r, adata_g, time_key):
-    """确保两边的 time_step 共享同一有序 levels；返回 intersect_levels"""
+    """Ensure both adata objects share the same ordered time_step levels; return intersect_levels."""
     tr = adata_r.obs[time_key]
     tg = adata_g.obs[time_key]
-    # 转为有序类别并对齐
+    # convert to ordered category and align
     if not pd.api.types.is_categorical_dtype(tr):
         tr = pd.Categorical(tr, ordered=True)
     if not pd.api.types.is_categorical_dtype(tg):
         tg = pd.Categorical(tg, ordered=True)
-    # 交集且保持真实集的顺序优先
+    # intersect levels; real set ordering takes priority
     levels = [x for x in tr.categories if x in set(tg.categories)]
     if len(levels) < 2:
-        raise ValueError(f"两数据集时间步交集 <2，无法比较：{levels}")
+        raise ValueError(f"Intersection of time steps between the two datasets is <2; cannot compare: {levels}")
     adata_r.obs[time_key] = pd.Categorical(adata_r.obs[time_key], categories=levels, ordered=True)
     adata_g.obs[time_key] = pd.Categorical(adata_g.obs[time_key], categories=levels, ordered=True)
     return pd.Index(levels)
 
 def _group_stats_by_time(X, codes):
-    """按离散 time codes 求每个时间点的均值与标准误；返回 dict: level -> (mean_vec, sem_vec, n)"""
+    """Compute per-time-point mean and SEM given discrete time codes; returns dict: level -> (mean_vec, sem_vec, n)."""
     out = {}
     uniq = np.unique(codes[~np.isnan(codes)])
     for u in uniq:
@@ -787,11 +788,11 @@ def _fisher(*p_lists):
 
 def _filter_uninformative_genes(X, min_detect_rate=0.05, min_groups=2, t_codes=None):
     """
-    过滤在至少 min_groups 个时间组里检测率 >= min_detect_rate 的基因。
-    返回保留的列索引。
+    Filter genes detected at rate >= min_detect_rate in at least min_groups time groups.
+    Returns indices of retained columns.
     """
     if t_codes is None:
-        # 全局检测率
+        # global detection rate
         det = (X > 0).mean(0)
         return np.where(det >= min_detect_rate)[0]
 
@@ -822,30 +823,31 @@ def timecourse_markers_real_then_compare(
     topn_markers=50,
 ):
     """
-    1) 在真实集上根据 time_key 寻找 time-course markers；
-    2) 在真实/生成集分别画这些 marker 的时间趋势；
-    3) 对每个 marker 比较真实 vs 生成的时间趋势相关性（按共同时间点的均值向量）。
+    1) Find time-course markers in the real dataset using time_key.
+    2) Plot the temporal trend of these markers in both real and generated datasets.
+    3) Compare the real vs. generated temporal trend correlation per marker
+       (using the mean vector at shared time points).
 
-    返回:
-      markers_df: 真实集筛出的 markers（含多种统计与 FDR，按显著性排序）
-      corr_df:    每个 marker 的 Pearson/Spearman 相关（真实均值 vs 生成均值）
-      plot_fn:    一个绘图函数 plot_markers_grid(markers, ncols=3, figsize=(...))
+    Returns:
+      markers_df: markers identified from the real dataset (with statistics and FDR, sorted by significance)
+      corr_df:    Pearson/Spearman correlation per marker (real mean vs. generated mean)
+      plot_fn:    a plotting function plot_markers_grid(markers, ncols=3, figsize=(...))
     """
-    # 只用共同基因
+    # use only shared genes
     genes = adata_real.var_names.intersection(adata_gen.var_names)
     if len(genes) == 0:
-        raise ValueError("两数据集没有共同基因")
+        raise ValueError("No common genes between the two datasets")
     adata_r = adata_real[:, genes].copy()
     adata_g = adata_gen[:, genes].copy()
 
-    # 对齐时间 levels
+    # align time levels
     levels = _align_time_levels(adata_r, adata_g, time_key)
 
     Xr = _get_X_dense(adata_r, layer=layer)
     Xg = _get_X_dense(adata_g, layer=layer)
 
     # ------- group means by time (for plotting & correlation) -------
-    # 将时间 levels 映射为 codes（0..L-1），方便取序列
+    # map time levels to codes (0..L-1) for sequence indexing
     level_to_code = {lv: i for i, lv in enumerate(levels)}
     r_codes_ord = np.array([level_to_code[lv] for lv in adata_r.obs[time_key]])
     g_codes_ord = np.array([level_to_code[lv] for lv in adata_g.obs[time_key]])
@@ -853,7 +855,7 @@ def timecourse_markers_real_then_compare(
     r_stats = _group_stats_by_time(Xr, r_codes_ord)  # dict[code] -> (mean_vec, sem_vec, n)
     g_stats = _group_stats_by_time(Xg, g_codes_ord)
 
-    # 组装每个 marker 的均值时间序列（按 levels 顺序）
+    # build per-marker mean time series (in levels order)
     def _mean_series(stats_dict, gi, L):
         arr = []
         for k in range(L):
@@ -869,7 +871,7 @@ def timecourse_markers_real_then_compare(
         gi = int(np.where(genes == gene)[0][0])
         real_means = _mean_series(r_stats, gi, L)
         gen_means  = _mean_series(g_stats, gi, L)
-        # 只在双方都非 NaN 的时间点上相关
+        # correlate only at time points where both values are finite
         mask = np.isfinite(real_means) & np.isfinite(gen_means)
         if mask.sum() >= 2:
             r_pear, p_pear = stats.pearsonr(real_means[mask], gen_means[mask])
@@ -887,11 +889,11 @@ def timecourse_markers_real_then_compare(
     # ------- plotting helper -------
     def plot_markers_grid(markers, ncols=3, figsize=(12, 3.0), with_sem=True):
         """
-        画 markers 的时间趋势：实线=真实，虚线=生成；可叠加标准误（阴影）。
+        Plot temporal trends of markers: solid=real, dashed=generated; optional SEM shading.
         """
         markers = [m for m in markers if m in genes]
         if not markers:
-            raise ValueError("无可绘制基因")
+            raise ValueError("No plottable genes")
         n = len(markers)
         nrows = int(np.ceil(n / ncols))
         fig, axes = plt.subplots(nrows, ncols, figsize=(figsize[0], figsize[1]*nrows), sharex=True)
@@ -913,7 +915,7 @@ def timecourse_markers_real_then_compare(
             y_g = _mean_series(g_stats, gi, L)
             ax.plot(x, y_g, "--", lw=2, label="GEN")
 
-            # 标题上写相关性
+            # include correlation in the title
             row = corr_df.loc[g] if g in corr_df.index else None
             subtitle = ""
             if row is not None and np.isfinite(row["spearman_r"]):
@@ -921,7 +923,7 @@ def timecourse_markers_real_then_compare(
             ax.set_title(f"{g}{subtitle}")
             ax.set_xticks(x); ax.set_xticklabels(list(map(str, levels)), rotation=0)
             ax.grid(alpha=0.2)
-        # 清空多余子图
+        # hide unused subplots
         for j in range(i+1, len(axes)):
             axes[j].axis("off")
         handles, labels = axes[0].get_legend_handles_labels()
@@ -937,22 +939,22 @@ from scipy.sparse import csr_matrix
 
 def largest_umap_component_mask(adata, n_neighbors=15, step_key="time_step", step0_value=0):
     """
-    基于 UMAP 坐标构图，返回属于“最大连通分量”的布尔掩码，
-    但始终保留所有 step_0 的细胞。
+    Build a graph on UMAP coordinates and return a boolean mask for the largest connected
+    component; always keep all cells from step_0.
     """
     if "X_umap" not in adata.obsm:
-        raise ValueError("adata.obsm['X_umap'] 不存在，请先运行 sc.tl.umap().")
+        raise ValueError("adata.obsm['X_umap'] does not exist; please run sc.tl.umap() first.")
 
     X = adata.obsm["X_umap"]
     G = kneighbors_graph(X, n_neighbors=n_neighbors, mode="connectivity", include_self=False)
-    G = 0.5 * (G + G.T)  # 对称化
+    G = 0.5 * (G + G.T)  # symmetrize
 
-    # 连通分量划分
+    # connected component partitioning
     _, labels = connected_components(G, directed=False)
     keep_label = np.bincount(labels).argmax()
     mask = labels == keep_label
 
-    # 无条件保留所有 step_0 细胞
+    # unconditionally keep all step_0 cells
     if step_key in adata.obs:
         step0_mask = adata.obs[step_key].values == step0_value
         mask = np.logical_or(mask, step0_mask)
@@ -973,7 +975,7 @@ def sample_trajectory(
     elif not isinstance(stop_cells, set):
         stop_cells = set(stop_cells)
 
-    # fate_prob 处理
+    # fate_prob handling
     if fate_prob is not None:
         if isinstance(fate_prob, dict):
             fp = fate_prob[lineage]
@@ -985,7 +987,7 @@ def sample_trajectory(
     traj = [start_cell]
     prev = -1
     cur = start_cell
-    hist_neighs = set()   # 历史上出现过的邻居
+    hist_neighs = set()   # set of all historical neighbours
 
     for _ in range(max_steps - 1):
         row_start, row_end = T.indptr[cur], T.indptr[cur + 1]
@@ -994,7 +996,7 @@ def sample_trajectory(
         if len(nbrs) == 0:
             break
 
-        # 构造mask
+        # build mask
         mask = np.ones_like(nbrs, dtype=bool)
         if forbid_self:
             mask &= (nbrs != cur)
@@ -1011,12 +1013,12 @@ def sample_trajectory(
         if len(nbrs) == 0:
             break
 
-        # top-k
+        # top-k selection
         if len(nbrs) > k:
             topk = np.argpartition(probs, -k)[-k:]
             nbrs, probs = nbrs[topk], probs[topk]
 
-        # 温度缩放 + 归一化
+        # temperature scaling + normalisation
         probs = np.maximum(probs, 0.0)
         if temperature is not None and temperature > 0:
             invT = 1.0 / temperature
@@ -1029,11 +1031,11 @@ def sample_trajectory(
         nxt = rng.choice(nbrs, p=probs)
         traj.append(nxt)
 
-        # 更新 prev / cur / hist_neighs
+        # update prev / cur / hist_neighs
         prev = cur
         cur = nxt
         rs, re = T.indptr[prev], T.indptr[prev + 1]
-        hist_neighs.update(T.indices[rs:re])  # 把prev的所有邻居都加入历史禁止集
+        hist_neighs.update(T.indices[rs:re])  # add all neighbours of prev to the historical forbidden set
 
         if cur in stop_cells:
             break
@@ -1104,7 +1106,7 @@ def basic_preprocess(adata, n_pcs=50, neighbors=30, seed=42):
         sc.pp.neighbors(adata, n_neighbors=neighbors, n_pcs=n_pcs, random_state=seed)
         sc.tl.umap(adata, random_state=seed)
         sc.tl.leiden(adata, key_added="leiden", random_state=seed, resolution=1.0)
-    # 不在这里强制 dpt，交由 ensure_pseudotime 控制
+    # DPT is not computed here; deferred to ensure_pseudotime
     return adata
 
 def paga_connectivity_binary(adata, key, threshold=0.03):
@@ -1350,54 +1352,54 @@ def analysis_topo(adata_r, adata_g, time_key, outdir="results_trajplot",
 
 def match_pattern_with_free_tail(traj, pattern):
     """
-    要求：
-    - 轨迹前缀必须匹配 pattern 的分段：
+    Requirements:
+    - The trajectory prefix must match the segmented pattern:
         pattern = [A, B, C]
-        合法前缀：A* B* C* （每段至少出现一次）
-    - 前缀部分不能出现 pattern 之外的类型
-    - pattern 匹配完成后，后面是什么都无所谓
-    - 必须包含 pattern 中的所有类型（每个至少一次），且顺序正确
+        valid prefix: A* B* C* (each segment must appear at least once)
+    - No cell type outside the pattern is allowed in the prefix region
+    - After the pattern is fully matched, the tail can be anything
+    - All types in the pattern must appear (each at least once) in the correct order
     """
     if not pattern:
         return False
 
     order = {p: i for i, p in enumerate(pattern)}
     seen = [False] * len(pattern)
-    p_idx = 0  # 当前处在 pattern[p_idx] 这一段
+    p_idx = 0  # currently in segment pattern[p_idx]
 
     for cell in traj:
         if cell not in order:
-            # pattern 还没全部匹配完时，不能出现外来类型
+            # foreign cell type encountered before the pattern is fully matched
             if all(seen):
-                # 已经完整匹配了 pattern，后面随便
+                # pattern fully matched; tail can be anything
                 return True
             else:
                 return False
 
         idx = order[cell]
 
-        # 不允许倒退，比如 pattern = [HSC, MPP]
-        # HSC, MPP 后又出现 HSC（且还在 pattern 区间内）是不可以的
+        # backtracking is forbidden, e.g. for pattern = [HSC, MPP]
+        # HSC appearing again after MPP (while still within the pattern region) is invalid
         if idx < p_idx:
             return False
 
-        # 尝试前进到下一段
+        # attempt to advance to the next segment
         if idx > p_idx:
-            # 必须正好前进一格，不能跨越（A -> C）
+            # must advance exactly one step; skipping is not allowed (e.g. A -> C)
             if idx == p_idx + 1:
                 p_idx = idx
             else:
                 return False
 
-        # 记录这个 pattern 元素已出现
+        # mark this pattern element as seen
         seen[idx] = True
 
-        # 如果所有 pattern 元素都至少出现过一次了，
-        # 那么 pattern 已经匹配完成，后面的东西不用管，直接 True
+        # if all pattern elements have appeared at least once,
+        # the pattern is fully matched; return True immediately
         if all(seen):
             return True
 
-    # 跑完整条轨迹还没集齐所有 pattern 元素 → 不匹配
+    # full trajectory exhausted without matching all pattern elements → no match
     return False
 
 def replace_query_with_nn_from_ref(
@@ -1407,65 +1409,65 @@ def replace_query_with_nn_from_ref(
     copy_obs_query: bool = True,
 ):
     """
-    在 PCA 空间中，为每个 query 细胞找到 ref 中的最近邻 ref 细胞，
-    用这些 ref 细胞构建一个“替身版”的新 AnnData（细胞数 = query 细胞数）。
+    Find the nearest neighbour in ref for each query cell in PCA space,
+    then construct a “surrogate” AnnData from those ref cells (same cell count as query).
 
-    参数
+    Parameters
     ----
     adata_ref : AnnData
-        参考数据，已经有 adata_ref.obsm[pca_key]
+        Reference data; must have adata_ref.obsm[pca_key].
     adata_query : AnnData
-        需要被“替换”的 query 数据，已经有 adata_query.obsm[pca_key]
+        Query data to be “replaced”; must have adata_query.obsm[pca_key].
     pca_key : str
-        存放 PCA 坐标的 key，例如 "X_pca_ref" 或 "X_pca_joint"
+        Key storing PCA coordinates, e.g. "X_pca_ref" or "X_pca_joint".
     copy_obs_query : bool
-        如果为 True，则在新 adata.obs 中保留来自 query 的一些信息
-        （会额外加几列，以便后续追踪）
+        If True, retain some query information in the new adata.obs
+        (extra columns added for traceability).
 
-    返回
+    Returns
     ----
     adata_new : AnnData
-        新的 AnnData，X / var 来自 ref，对应顺序与 query 一一匹配。
+        New AnnData with X / var from ref, aligned one-to-one with query.
     nn_indices : np.ndarray
-        每个 query 对应的 ref 最近邻索引（在 adata_ref 中的行号）。
+        Index of the nearest ref neighbour for each query cell (row index in adata_ref).
     """
 
-    # 1) 取 PCA 坐标
+    # 1) get PCA coordinates
     X_ref = adata_ref.obsm[pca_key]
     X_q   = adata_query.obsm[pca_key]
 
-    # 2) 建立最近邻搜索结构 (ref 上建图)
+    # 2) build nearest-neighbour index on ref
     nbrs = NearestNeighbors(n_neighbors=1, metric="euclidean")
     nbrs.fit(X_ref)
 
-    # 3) 对每个 query 找最近邻 ref 索引
+    # 3) find nearest ref index for each query cell
     dist, idx = nbrs.kneighbors(X_q)  # idx shape: (n_query, 1)
-    nn_indices = idx[:, 0]            # 展平为 (n_query,)
+    nn_indices = idx[:, 0]            # flatten to (n_query,)
 
-    # 4) 用最近邻 ref 细胞构建新的矩阵 / obs / obsm
+    # 4) build new matrix / obs / obsm from nearest ref cells
     X_new = adata_ref.X[nn_indices, :]
 
-    # obs：默认先用 ref 的 obs
+    # obs: start from ref obs
     obs_new = adata_ref.obs.iloc[nn_indices].copy()
-    obs_new.index = adata_query.obs_names  # 用 query 的细胞名替换索引
+    obs_new.index = adata_query.obs_names  # replace index with query cell names
 
-    # 可选：把 query 的信息也 merge 进来，方便对比
+    # optional: merge query info for comparison
     if copy_obs_query:
         for col in adata_query.obs.columns:
             obs_new[f"query_{col}"] = adata_query.obs[col].values
 
-    # var：直接用 ref 的 var（假设 ref/query 基因集已经对齐）
+    # var: use ref var directly (assumes ref/query gene sets are already aligned)
     var_new = adata_ref.var.copy()
 
-    # 构建新的 AnnData
+    # build new AnnData
     adata_new = sc.AnnData(X=X_new, obs=obs_new, var=var_new)
 
-    # 5) 可选：把 ref 里已有的嵌入也拷过来（PCA / UMAP 等）
+    # 5) optional: copy embeddings from ref (PCA / UMAP, etc.)
     for key in adata_ref.obsm_keys():
         if adata_ref.obsm[key].shape[0] == adata_ref.n_obs:
             adata_new.obsm[key] = adata_ref.obsm[key][nn_indices, :].copy()
 
-    # 记录最近邻索引 / 距离（方便以后 debug）
+    # store nearest-neighbour indices / distances for debugging
     adata_new.obsm["nn_index_in_ref"] = nn_indices[:, None]
     adata_new.obsm["nn_dist_in_pca"] = dist
 

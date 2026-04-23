@@ -1,0 +1,103 @@
+# Perturbation gene configuration for h5ad_traj_vq dataset.
+#
+# gene_modules: named groups of up/down-regulated gene lists.
+# amplify_rules: ordered list of amplification operations applied at dataset init.
+#   Each rule specifies:
+#     cluster   - obs['clusters'] value to select cells
+#     module    - key in gene_modules
+#     direction - "up" or "down"
+#     add       - additive offset applied before scaling
+#     mul       - multiplicative scale factor
+
+gene_modules:
+  HSC_to_CLP:
+    up:
+      - SPI1     # PU.1: initiates lymphoid priming (moderate; excessive levels suppress B/T)
+      - IKZF1    # Ikaros: CLP-defining gene
+      - IKZF3    # Aiolos: lymphoid reinforcement
+      - TCF3     # E2A: essential TF for B/T cells
+      - EBF1     # B lineage specification gene
+      - FLT3     # LMPP/CLP marker; promotes early lymphoid expansion
+      - IL7R     # IL7R+ is a CLP hallmark
+      - DNTT     # TdT; strong lymphoid marker
+      - LYL1     # LMPP/CLP priming
+      - LMO2
+    down:
+      - GATA1    # suppresses erythroid/megakaryocyte fate
+      - GATA2    # myeloid priming factor
+      - CEBPA    # myeloid master regulator
+      - CEBPB
+      - GFI1     # granulocyte program
+      - CSF1R    # macrophage receptor
+
+  HSC_to_DC:
+    up:
+      - IRF8     # key DC1 factor; high IRF8 → DC1
+      - BATF3    # cDC1 master regulator
+      - ID2      # suppresses pDC program; promotes DC1
+      - SPI1     # PU.1: common DC forward regulator
+      - FLT3     # FLT3L signaling promotes DC generation
+      - ZBTB46   # classical DC signature gene
+    down:
+      - GATA1
+      - GATA2
+      - CEBPA    # high CEBPA blocks DC differentiation, diverts to granulocyte
+      - TCF3     # T/B cell program; needs to be suppressed
+      - EBF1     # B lineage TF
+
+  HSC_to_Mono:
+    up:
+      - IRF8     # monocyte / DC2 program
+      - CEBPB    # monocyte & macrophage differentiation
+      - SPI1     # PU.1: high level biases toward monocyte/macrophage
+      - KLF4     # forced KLF4 upregulation → monocyte fate
+      - CSF1R    # M-CSF receptor; drives monocyte fate
+      - RUNX1
+      - LYZ      # lysozyme, monocyte marker
+    down:
+      - IKZF1    # lymphoid program
+      - IKZF3    # lymphoid program
+      - TCF3     # B cell TF
+      - EBF1     # B cell TF
+      - GATA1    # erythroid/megakaryocyte
+      - GATA2    # erythroid/megakaryocyte
+
+  HSC_to_Ery:
+    up:
+      - GATA1
+      - KLF1
+      - GFI1B
+      - NFE2
+      - ZFPM1    # FOG1
+    down:
+      - SPI1
+      - IKZF1
+      - IKZF3
+      - TCF3
+      - EBF1
+      - FLT3
+      - IL7R
+
+# Amplification rules applied sequentially during dataset initialisation.
+# Cells are selected by obs['clusters'] == cluster.
+amplify_rules:
+  - cluster: HSC_1
+    module: HSC_to_CLP
+    direction: up
+    add: 2
+    mul: 8
+  - cluster: HSC_1
+    module: HSC_to_CLP
+    direction: down
+    add: 1
+    mul: 0
+  - cluster: HSC_2
+    module: HSC_to_CLP
+    direction: up
+    add: 2
+    mul: 8
+  - cluster: HSC_2
+    module: HSC_to_CLP
+    direction: down
+    add: 1
+    mul: 0

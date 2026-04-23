@@ -1,9 +1,9 @@
 :# default: config values
 log_interval: 10 # log every n iterations; default 20 
-eval_itervals: 500 # 隔多少iter做一次eval; default 100 
-eval_iters: 1 # 一次eval多少个batch
-eval_cell_num: 3000 # 一次eval有多少个cell
-# n_eval_cell: 100 # 一次eval pct的batch里有多少个cell
+eval_itervals: 500 # eval interval in iterations; default 100
+eval_iters: 1 # number of batches per eval
+eval_cell_num: 3000 # number of cells per eval
+# n_eval_cell: 100 # number of cells per eval batch
 save_ckpt_iter: 1000 # save a checkpoint every n iterations
 output_dir: "/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/velo_pretrain_ckpt_202511"
 comment: "traj_finetune_ARold_lr1e4_vq_26c24d512b_new_70w_big_dp01_head"

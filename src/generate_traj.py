@@ -25,9 +25,9 @@ from model.CellTempo_backbone import CellTempoConfig, CellTempo_backbone
 import multiprocessing
 
 
-# --------------------- 配置加载与处理 ---------------------
+# --------------------- Config loading & processing ---------------------
 
-# 追加数据到JSON文件
+# append data to a JSON file
 def append_to_json_file(data, json_path):
     if os.path.exists(json_path):
         with open(json_path, 'r') as f:
@@ -44,12 +44,12 @@ def append_to_json_file(data, json_path):
         json.dump(existing_data, f, indent=4)
 
 def load_yaml_config(file_path):
-    """加载 YAML 配置文件"""
+    """Load a YAML configuration file."""
     with open(file_path, 'r') as file:
         return yaml.safe_load(file)
 
 def get_model_config_from_yaml(yaml_config, vocab_size):
-    """从 YAML 配置中提取模型相关参数"""
+    """Extract model-related parameters from a YAML config dict."""
     return CellTempoConfig(
         vocab_size=vocab_size,
         block_size = yaml_config["block_size"],
@@ -82,19 +82,19 @@ def subset_dataset_by_prefix(dataset_val, prefix):
     return  target_list
 
 
-# 将处理单个数据集的代码封装到一个函数中
+# wrap single-dataset processing into a function
 def process_dataset(dataset_name,args):
     print(f"\n=== Starting to process dataset: {dataset_name} ===")
     print("Step 1: Loading validation dataset...")
-    eval_data = eval_datasets[dataset_name]  # 直接获取验证数据集
+    eval_data = eval_datasets[dataset_name]  # retrieve validation dataset directly
 
     print("Step 2: Creating DataLoader...")
-    # 随机选出要抽取的样本索引
-    if args.traj_num == 0: # 用全部
+    # randomly select sample indices
+    if args.traj_num == 0: # use all samples
         indices = np.arange(len(eval_data))
     else:
         indices = random.sample(range(len(eval_data)), min(args.traj_num,len(eval_data)))#*2
-    # 用 Subset 创建新 dataset
+    # create dataset subset
     subset = Subset(eval_data, indices)
     dataloader = DataLoader(subset, batch_size=yaml_config['eval_batch_size'], collate_fn=collate_fn_infer_traj_vq)
     
@@ -123,7 +123,7 @@ def process_dataset(dataset_name,args):
 
     print(f"=== Finished processing dataset: {dataset_name} ===\n")
 
-# --------------------- 回调与评估 ---------------------
+# --------------------- Callbacks & evaluation ---------------------
 
 class CustomEvalAndLogCallback(TrainerCallback):
     def __init__(self, eval_datasets, sample_size=None, eval_step_per=100):
@@ -150,12 +150,12 @@ class CustomEvalAndLogCallback(TrainerCallback):
                         for metric, value in metrics.items()
                     })
 
-            if is_main_process(local_rank=trainer.args.local_rank):  # 仅在主进程执行 WandB 日志操作
+            if is_main_process(local_rank=trainer.args.local_rank):  # only log to W&B from the main process
                 wandb.log(log_data)
             print("Evaluation Logs:", log_data)
 
 if __name__ == "__main__":
-    # 设置多进程启动方法为 'spawn'，避免 CUDA 初始化冲突
+    # set multiprocessing start method to 'spawn' to avoid CUDA init conflicts
     multiprocessing.set_start_method('spawn', force=True)
 
     parser = argparse.ArgumentParser(description="MixMulan Trainer")
@@ -183,47 +183,50 @@ if __name__ == "__main__":
     yaml_path = args.config_file
     yaml_config = load_yaml_config(yaml_path)
 
-    # 简化实验数据的记录
+    # simplified experiment record
     experiment_data = {
         "comment": yaml_config.get("comment", ""),
-        "dataset_names": yaml_config.get("dataset_names", []),  # 直接记录所有数据集名称列表
+        "dataset_names": yaml_config.get("dataset_names", []),  # record all dataset names directly
         "ckpt_path": yaml_config.get("ckpt_path", "")
     }
 
-    # 获取需要的配置项，支持字符串或列表格式
+    # retrieve config items; support both string and list formats
     data_folders = yaml_config.get("data_folders", "")
     data_types = yaml_config.get("data_types", "")
 
-    # 将字符串转换为单元素列表
+    # convert string to single-element list
     if isinstance(data_folders, str):
         data_folders = [data_folders]
     if isinstance(data_types, str):
         data_types = [data_types]
 
-    # 确保data_folders和data_types至少有一个元素
+    # ensure data_folders and data_types each have at least one element
     if len(data_folders) == 0:
-        raise ValueError("data_folders不能为空")
+        raise ValueError("data_folders cannot be empty")
     if len(data_types) == 0:
-        raise ValueError("data_types不能为空")
+        raise ValueError("data_types cannot be empty")
 
 
-    # 修改这里，使用initialize_datasets_from_config初始化每个数据集
+    # initialize each dataset using initialize_datasets_from_config
     eval_datasets = {}
     for ds_name in yaml_config["dataset_names"]:
-        # 为每个数据集创建一个配置
+        # build config for each dataset
         dataset_config = {
-            "data_folders": data_folders,  # 使用相同的文件夹配置
-            "dataset_names": [ds_name],    # 只使用当前数据集名称
+            "data_folders": data_folders,  # shared folder config
+            "dataset_names": [ds_name],    # only the current dataset name
             "meta_info_name": yaml_config["meta_info_name"],
             "block_size": yaml_config["block_size"],
             "mapping_dict": yaml_config["mapping_dict"],
             "global_dataset": yaml_config["global_dataset"],
-            "data_types": data_types,      # 使用相同的数据类型
-            "vq_vae_path": yaml_config.get("vq_vae_path",'/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel')
+            "data_types": data_types,      # shared data type config
+            "vq_vae_path": yaml_config.get("vq_vae_path",'/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel'),
+            # trajectory_perturb_h5ad specific
+            "perturb_config": yaml_config.get("perturb_config", None),
+            "trajectory_pkl": yaml_config.get("trajectory_pkl", None),
         }
         
-        # 使用initialize_datasets_from_config初始化当前数据集
-        # trajectory: 跑测试集; trajectory_h5ad: h5ad类型的轨迹生成; trajectory_perturb_h5ad: 扰动轨迹中的某种细胞，生成后续的细胞; 
+        # trajectory: run on test set; trajectory_h5ad: generate from h5ad file;
+        # trajectory_perturb_h5ad: perturb intermediate cells and generate continuations
         if args.infer_type == 'trajectory_scbasetraj':
             _, datasets_dict = initialize_datasets_from_config(dataset_config, skip_train=True)
         elif args.infer_type == 'trajectory_h5ad':
@@ -233,14 +236,14 @@ if __name__ == "__main__":
         else:
             raise ValueError('infer_type not supported')
         
-        # 将当前数据集添加到eval_datasets中
+        # add current dataset to eval_datasets
         eval_datasets[ds_name] = datasets_dict[ds_name]
 
     eval_cell_num = yaml_config['eval_cell_num']
     random.seed(42)
 
-    # 修改这一部分：获取 vocab_size 并加载模型
-    # 首先获取第一个数据集的 vocab_size
+    # get vocab_size and load model
+    # retrieve vocab_size from the first dataset
     first_dataset_name = yaml_config['dataset_names'][0]
     vocab_size = eval_datasets[first_dataset_name].vocab_size
     model_config = get_model_config_from_yaml(yaml_config, vocab_size)
@@ -248,15 +251,15 @@ if __name__ == "__main__":
     model = CellTempo_backbone.from_pretrained(model_ckpt, config=model_config)
     model.eval()
 
-    # 设置日志路径
+    # set log path
     log_path = "./experiments_log.json"
     setattr(args, 'save_name', yaml_config['save_name'])
 
-    # 遍历处理每个数据集
+    # process each dataset
     for dataset_name in yaml_config['dataset_names']:
         process_dataset(dataset_name, args)
 
-    # 处理完所有数据集后，一次性添加实验记录
+    # append experiment record after all datasets are processed
     append_to_json_file(experiment_data, log_path)
     print(f"Experiment data for all datasets appended to {log_path}")
     print(f"All datasets processed successfully!")

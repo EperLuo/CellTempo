@@ -1,7 +1,7 @@
 import os, glob
 from tqdm import tqdm
 
-# 导入模型和数据相关模块
+# import model and data modules
 # from utils.dataset import mixDataTypeTargetDataset
 from .dataset import Tahoe100m_vq, scBasetraj_vq, h5ad_data_vq, h5ad_traj_vq
 from datasets import load_dataset,load_from_disk, concatenate_datasets
@@ -18,11 +18,11 @@ def snap(tag):
     print(f"[{tag}] RSS={mi.rss/1024/1024:.1f}MB, FDs={fds}")
 
 def load_and_concatenate_shards(parent_dir: str, expect_features=None):
-    """读取分片并合并成一个 Dataset（零拷贝合并）"""
+    """Load shards and concatenate into a single Dataset (zero-copy merge)."""
     dirs = [d for d in glob.glob(os.path.join(parent_dir, "part_*")) if os.path.isdir(d)]
     if not dirs:
         raise FileNotFoundError(f"No shards under {parent_dir}")
-    # 按编号排序
+    # sort by shard index
     import re as _re
     dirs = sorted(dirs, key=lambda p: int(_re.search(r"part_(\d+)", p).group(1)))
     # parts = [load_from_disk(p) for p in tqdm(dirs, desc="Loading datasets")]
@@ -37,7 +37,7 @@ def load_and_concatenate_shards(parent_dir: str, expect_features=None):
     return concatenate_datasets(parts)
 
 def get_dataset_config_from_yaml(yaml_config):
-    """从 YAML 配置中提取数据集相关参数"""
+    """Extract dataset-related parameters from a YAML config dict."""
     return {
         "data_folders": yaml_config["data_folders"],
         "dataset_names": yaml_config["dataset_names"],
@@ -51,7 +51,7 @@ def get_dataset_config_from_yaml(yaml_config):
 
 
 def initialize_datasets_from_config(dataset_config, skip_train=False):
-    """初始化scBasetraj的训练集和验证集"""
+    """Initialize scBaseTraj training and validation datasets."""
     eval_datasets = {}
     
     dataset = load_and_concatenate_shards(os.path.join(dataset_config["data_folders"][0], dataset_config["dataset_names"][0]))
@@ -84,9 +84,9 @@ def initialize_datasets_from_config(dataset_config, skip_train=False):
             )
         }
     
-    # 如果skip_train为True，只返回eval_datasets的val部分
+    # if skip_train is True, return only the val split of eval_datasets
     if skip_train:
-        # 提取每个数据集的val部分
+        # extract the val split for each dataset
         val_only_datasets = {ds_name: ds_dict['val'] for ds_name, ds_dict in eval_datasets.items()}
         return None, val_only_datasets
 
@@ -95,7 +95,7 @@ def initialize_datasets_from_config(dataset_config, skip_train=False):
     return train_dataset, eval_datasets
 
 def initialize_datasets_from_config_h5ad(dataset_config, skip_train=False):
-    """初始化h5ad格式的验证集"""
+    """Initialize h5ad-format validation datasets."""
     eval_datasets = {}
 
     for ds_idx, ds_name in enumerate(dataset_config["dataset_names"]):
@@ -113,9 +113,9 @@ def initialize_datasets_from_config_h5ad(dataset_config, skip_train=False):
             )
         }
     
-    # 如果skip_train为True，只返回eval_datasets的val部分
+    # if skip_train is True, return only the val split of eval_datasets
     if skip_train:
-        # 提取每个数据集的val部分
+        # extract the val split for each dataset
         val_only_datasets = {ds_name: ds_dict['val'] for ds_name, ds_dict in eval_datasets.items()}
         return None, val_only_datasets
 
@@ -124,7 +124,7 @@ def initialize_datasets_from_config_h5ad(dataset_config, skip_train=False):
     return train_dataset, eval_datasets
 
 def initialize_datasets_from_config_h5ad_traj(dataset_config, skip_train=False):
-    """初始化训练集和验证集"""
+    """Initialize training and validation datasets from h5ad trajectory files."""
     eval_datasets = {}
 
     for ds_idx, ds_name in enumerate(dataset_config["dataset_names"]):
@@ -138,13 +138,15 @@ def initialize_datasets_from_config_h5ad_traj(dataset_config, skip_train=False):
                 mode='test',
                 global_dataset=dataset_config["global_dataset"],
                 data_types=[dataset_config["data_types"][ds_idx]],
-                vq_vae_path=dataset_config["vq_vae_path"]
+                vq_vae_path=dataset_config["vq_vae_path"],
+                perturb_config=dataset_config.get("perturb_config", None),
+                trajectory_pkl=dataset_config.get("trajectory_pkl", None),
             )
         }
     
-    # 如果skip_train为True，只返回eval_datasets的val部分
+    # if skip_train is True, return only the val split of eval_datasets
     if skip_train:
-        # 提取每个数据集的val部分
+        # extract the val split for each dataset
         val_only_datasets = {ds_name: ds_dict['val'] for ds_name, ds_dict in eval_datasets.items()}
         return None, val_only_datasets
 
@@ -153,7 +155,7 @@ def initialize_datasets_from_config_h5ad_traj(dataset_config, skip_train=False):
     return train_dataset, eval_datasets
 
 def initialize_datasets_from_config_perturb(dataset_config, skip_train=False):
-    """初始化训练集和验证集"""
+    """Initialize training and validation datasets for perturbation tasks."""
     eval_datasets = {}
     dataset = load_dataset("parquet", 
                        data_files=os.path.join(dataset_config["data_folders"][0],"data/data/train-*.parquet"), 
@@ -188,9 +190,9 @@ def initialize_datasets_from_config_perturb(dataset_config, skip_train=False):
             )
         }
     
-    # 如果skip_train为True，只返回eval_datasets的val部分
+    # if skip_train is True, return only the val split of eval_datasets
     if skip_train:
-        # 提取每个数据集的val部分
+        # extract the val split for each dataset
         val_only_datasets = {ds_name: ds_dict['val'] for ds_name, ds_dict in eval_datasets.items()}
         return None, val_only_datasets
 

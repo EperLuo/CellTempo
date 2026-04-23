@@ -32,31 +32,31 @@ from model.CellTempo_VQVAE.model import VQModel
 
 def map_adata_to_reference_genes(adata, ref_genes):
     """
-    将 adata 的基因映射到参考基因列表 ref_genes 上。
-    - 如果基因缺失，则补零列。
-    - 如果有多余基因，则会被去除。
-    - 输出的 adata.var 会按 ref_genes 顺序排列。
+    Map genes in adata to the reference gene list ref_genes.
+    - Missing genes are zero-padded.
+    - Extra genes are dropped.
+    - The output adata.var follows the order of ref_genes.
 
-    参数:
-        adata: AnnData 对象
-        ref_genes: list[str]，参考基因列表（目标基因顺序）
-    返回:
-        一个新的 AnnData 对象
+    Args:
+        adata: AnnData object.
+        ref_genes: list[str], reference gene list (target gene order).
+    Returns:
+        A new AnnData object.
     """
-    # 现有基因名
+    # existing gene names
     current_genes = np.array(adata.var_names)
 
-    # 找出交集和索引映射
+    # find intersection and index mapping
     intersect_genes = np.intersect1d(current_genes, ref_genes)
     missing_genes = [g for g in ref_genes if g not in current_genes]
 
     print(f"✅ {len(intersect_genes)} genes matched, "
           f"{len(missing_genes)} missing from adata.")
 
-    # 取出交集基因的表达矩阵
+    # extract expression matrix for intersecting genes
     adata_aligned = adata[:, intersect_genes].copy()
 
-    # 如果存在缺失基因，用0填充这些列
+    # zero-pad missing genes
     if missing_genes:
         import scipy.sparse as sp
         n_cells = adata_aligned.n_obs
@@ -67,7 +67,7 @@ def map_adata_to_reference_genes(adata, ref_genes):
         adata_missing.obs_names = adata_aligned.obs_names
         adata_aligned = ad.concat([adata_aligned, adata_missing], axis=1)
 
-    # 按 ref_genes 顺序重新排列
+    # reorder to match ref_genes order
     adata_aligned = adata_aligned[:, ref_genes].copy()
     adata_aligned.obs = adata.obs
 
@@ -75,7 +75,7 @@ def map_adata_to_reference_genes(adata, ref_genes):
 
 
 def collate_fn(batch):
-    # 分别提取tokens和values
+    # extract tokens and values
     tokens = [torch.tensor(item['tokens']) for item in batch]
     values = [torch.tensor(item['values']) for item in batch]
     data_len = torch.tensor([torch.tensor(item['trunc_full_len']) for item in batch])
@@ -83,24 +83,24 @@ def collate_fn(batch):
     c2_start = torch.tensor([torch.tensor(item['c2_start']) for item in batch])
     
     
-    # 生成标签，这里简单地将序列向左移动一位
-    y_t = [torch.cat([t[1:], torch.tensor([0])]) for t in tokens]  # 对tokens生成下一个词的标签
-    y_v = [torch.cat([v[1:], torch.tensor([0])]) for v in values]  # 对values做同样处理
+    # generate labels by shifting the sequence left by one position
+    y_t = [torch.cat([t[1:], torch.tensor([0])]) for t in tokens]  # next-token labels
+    y_v = [torch.cat([v[1:], torch.tensor([0])]) for v in values]  # same for values
 
-    # 填充或截断
+    # pad sequences
     tokens_padded = pad_sequence(tokens, batch_first=True, padding_value=0)
     values_padded = pad_sequence(values, batch_first=True, padding_value=0)
     y_t_padded = pad_sequence(y_t, batch_first=True, padding_value=0)
     y_v_padded = pad_sequence(y_v, batch_first=True, padding_value=0)
     
-    # 根据c1_len创建一个形状与tokens_padded相同的张量，元素由0和1组成
+    # build cell_pos tensor (same shape as tokens_padded) using c1_len
     cell_pos = torch.zeros_like(tokens_padded)
     for i, c1_ln in enumerate(c1_len):
         c2_st = c2_start[i]
         cell_pos[i, c1_ln:c2_st] = 1
         cell_pos[i, c2_st:] = 2
 
-    # 返回处理后的批次数据
+    # return processed batch
     return {
         'tokens': tokens_padded,
         'values': values_padded,
@@ -121,18 +121,18 @@ def collate_fn_train_traj_vq(batch):
     c1_len = torch.tensor([item['c1_len'] for item in batch])
     c2_start = torch.tensor([item['c2_start'] for item in batch])
     
-    # 生成标签，这里简单地将序列向左移动一位
+    # generate labels by shifting the sequence left by one position
     y_t = [torch.cat([torch.tensor(t[1:]), torch.tensor([0])]) for t in tokens]
 
-    # 填充或截断
+    # pad sequences
     end_token = tokens[0][-1]
     tokens_padded = pad_sequence([torch.tensor(t) for t in tokens], batch_first=True, padding_value=end_token)
     y_t_padded = pad_sequence(y_t, batch_first=True, padding_value=end_token)
 
-    # padding值设为0
+    # padding value is 0
     cell_pos = pad_sequence([torch.tensor(c) for c in cell_pos_list], batch_first=True, padding_value=0)
 
-    # 返回处理后的批次数据
+    # return processed batch
     return {
         'input_ids': tokens_padded, 
         'labels': y_t_padded,
@@ -144,8 +144,8 @@ def collate_fn_train_traj_vq(batch):
 
 def collate_fn_infer_traj_vq(batch):
     """
-    由于每个批次内的样本长度相同，因此无需 padding。
-    我们可以直接堆叠各个字段。
+    Since all samples within a batch have the same length, no padding is needed.
+    Fields can be stacked directly.
     """
     if 'target_id' in batch[0].keys():
         prefix_num = batch[0]['target_id']
@@ -160,11 +160,11 @@ def collate_fn_infer_traj_vq(batch):
         print(f"Different c2_start values in batch: {unique_c2_start}")
     assert len(unique_c2_start) == 1, f"Batch samples have different c2_start values: {unique_c2_start}"
     
-    # 确保所有切片后的长度一致
+    # ensure all sliced lengths are consistent
     slice_lengths = [item['c2_start'] for item in batch]
     assert len(set(slice_lengths)) == 1, "Slice lengths are not consistent."
     
-    # c2_start是一个cell的长度，+2是cell_id和<S>
+    # c2_start is one cell's length; +2 for the cell_id token and <S> token
     input_ids = torch.stack([torch.tensor(item['tokens'][:item['c2_start']*prefix_num+2]) for item in batch], dim=0) 
     # x_expr = torch.stack([torch.tensor(item['values'][:item['c2_start']]) for item in batch], dim=0)
     c1_len = torch.tensor([item['c1_len'] for item in batch], dtype=torch.long)
@@ -182,8 +182,8 @@ def collate_fn_infer_traj_vq(batch):
     #     torch.tensor(item['values'][item['c2_start']:]) for item in batch
     # ], batch_first=True, padding_value=-100)
     
-    # 使用和train_target相同的逻辑处理cell_pos
-    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)  # 无 padding，全部为 True
+    # build attention_mask using the same logic as train_target
+    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)  # no padding — all True
 
     return {
         'input_ids': input_ids,
@@ -198,11 +198,11 @@ def collate_fn_infer_traj_vq(batch):
     }
 
 def load_and_concatenate_shards(parent_dir: str, expect_features=None):
-    """读取分片并合并成一个 Dataset（零拷贝合并）"""
+    """Load shards and concatenate into a single Dataset (zero-copy merge)."""
     dirs = [d for d in glob.glob(os.path.join(parent_dir, "part_*")) if os.path.isdir(d)]
     if not dirs:
         raise FileNotFoundError(f"No shards under {parent_dir}")
-    # 按编号排序
+    # sort by shard index
     import re as _re
     dirs = sorted(dirs, key=lambda p: int(_re.search(r"part_(\d+)", p).group(1)))
 
@@ -212,23 +212,23 @@ def load_and_concatenate_shards(parent_dir: str, expect_features=None):
 
 def filter_by_names(dataset, dataset_names, train_flag=True, num_proc=8, batch_size=100_000):
     """
-    dataset: Dataset 或 DatasetDict（若是 DatasetDict，则对每个 split 过滤）
-    dataset_names: 要“保留为测试集”的数据集名列表
-    train_flag: True 取训练集（not in 名单），False 取测试集（in 名单）
-    num_proc: 并行进程数
-    batch_size: batched 过滤时的批大小（可按内存调）
+    dataset: Dataset or DatasetDict (if DatasetDict, each split is filtered separately).
+    dataset_names: list of dataset names to reserve as the test set.
+    train_flag: True selects the training set (not in list), False selects the test set (in list).
+    num_proc: number of parallel processes.
+    batch_size: batch size for batched filtering (adjust based on available memory).
     """
     names = set(dataset_names)
 
     def keep_batch(batch):
-        # 向量化判断，返回布尔列表
+        # vectorized boolean check
         if train_flag:
             return [nm.split('/')[-1] not in names for nm in batch]
         else:
             return [nm.split('/')[-1] in names for nm in batch]
 
     if isinstance(dataset, DatasetDict):
-        # 对每个 split 分别过滤
+        # filter each split separately
         return DatasetDict({
             split: ds.filter(
                 keep_batch, input_columns=["dataset_name"],
@@ -238,29 +238,29 @@ def filter_by_names(dataset, dataset_names, train_flag=True, num_proc=8, batch_s
             for split, ds in dataset.items()
         })
     else:
-        # 单个 Dataset
+        # single Dataset
         return dataset.filter(
             keep_batch, input_columns=["dataset_name"],
             batched=True, batch_size=batch_size,
             num_proc=num_proc, desc=f"Filter ({'train' if train_flag else 'test'})"
         )
 
-class scBasetraj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
-    ## 目前兼容： Velocity ✅，scperturb✅
-    ## 对于第二个细胞，我不再使用全长基因，而是只把Top 100的 genes 放进去。
-    ## 解决从哪儿获取Top 100 list的问题。✅
-    ## FIXME 这样其实只兼容perturbation任务，不兼容velocity了，但也可以先都做完预训练，然后再做这个。
-    ## FIXME 给中间连接token加上positional encoding，这样就可以区分前后了。不然第二个cell不知道要按什么顺序生成。
+class scBasetraj_vq(Dataset): # Accepts multiple HuggingFace datasets
+    ## Currently compatible: Velocity ✅, scperturb ✅
+    ## For the second cell, only the Top 100 genes are used instead of the full gene set.
+    ## Resolved: how to obtain the Top 100 gene list. ✅
+    ## FIXME: currently only compatible with perturbation tasks, not velocity; pre-training can come first.
+    ## FIXME: add positional encoding to inter-cell tokens so order is preserved between cells.
 
     def __init__(self,
                  data_folders: list = ['path1','path2'],
                  dataset_names: list = ['name1','name2'],
                  crop_train_length: int = 6000,
                  meta_info_name: str = 'mix_meta_info.json',
-                 mapping_dict: str = 'velo_mapping_dict.json', # 只有velocity需要这个，来globally找next cell
+                 mapping_dict: str = 'velo_mapping_dict.json', # only needed for velocity; used to find next cell globally
                  mode: str = 'train',
-                 global_dataset: str = 'velo_dataset_all', # 只有velocity需要这个，来globally找next cell
-                 data_types: list = ['trajectory','perturb'], # sc-rna, velocity, perturb
+                 global_dataset: str = 'velo_dataset_all', # only needed for velocity; used to find next cell globally
+                 data_types: list = ['trajectory','perturb'], # supported types: sc-rna, velocity, perturb
                  dataset: ADataset = None,
                  vq_vae_path: str = '/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel'
                 ):
@@ -286,7 +286,7 @@ class scBasetraj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
             logger.info(f'cropped data_block_size  is {crop_train_length}')
         
         self.reference_gene = pd.read_csv(str(BASE_DIR / 'OS_scRNA_gene_index.18791.tsv'), sep='\t')['gene_name'].values
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))  # 当前进程的 GPU 编号
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))  # GPU index of the current process
         device = torch.device(f"cuda:{local_rank}")
         print('current device: ', device)
         self.vq_model = VQModel.from_pretrained(vq_vae_path,cvq_distance = 'cos',cvq_anchor='probrandom')#.to(device=device)
@@ -302,7 +302,7 @@ class scBasetraj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
 
         data_type = self.data_types[0]
         traj = self.trajectory_list[idx_num].as_py()[::3]
-        while traj[0] not in self.all_cell_name:  # 有一些数据在预处理的时候被丢掉了
+        while traj[0] not in self.all_cell_name:  # some cells were dropped during preprocessing
             idx_num += 1
             traj = self.trajectory_list[idx_num].as_py()[::3]
         
@@ -347,7 +347,7 @@ class scBasetraj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
         
         start_tokens = ['<S>']
 
-        # 保存instruction信息
+        # store instruction info
         instruction = {}
         end_tokens = ['<E>']
         token_cell = processed_cell['values'].astype(str) #[str(index) for index in processed_cell['values']]
@@ -366,30 +366,30 @@ class scBasetraj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
         
         concated_cell = {
             'tokens': token_ids,  
-            'c1_len': c1_len, # 不带 inter tokens
-            'c2_start': c1_len, # 加上inter_tokens
+            'c1_len': c1_len, # without inter tokens
+            'c2_start': c1_len, # including inter tokens
             'trunc_full_len': full_length,
             'cell_pos': cell_pos,
-            'instructions': instruction,  # 新增：保存instruction信息
+            'instructions': instruction,  # save instruction info
         }
         return concated_cell
 
-class h5ad_data_vq(Dataset): # DatasetList里可以给多个huggingface dataset
-    ## 目前兼容： Velocity ✅，scperturb✅
-    ## 对于第二个细胞，我不再使用全长基因，而是只把Top 100的 genes 放进去。
-    ## 解决从哪儿获取Top 100 list的问题。✅
-    ## FIXME 这样其实只兼容perturbation任务，不兼容velocity了，但也可以先都做完预训练，然后再做这个。
-    ## FIXME 给中间连接token加上positional encoding，这样就可以区分前后了。不然第二个cell不知道要按什么顺序生成。
+class h5ad_data_vq(Dataset): # Accepts multiple HuggingFace datasets
+    ## Currently compatible: Velocity ✅, scperturb ✅
+    ## For the second cell, only the Top 100 genes are used instead of the full gene set.
+    ## Resolved: how to obtain the Top 100 gene list. ✅
+    ## FIXME: currently only compatible with perturbation tasks, not velocity; pre-training can come first.
+    ## FIXME: add positional encoding to inter-cell tokens so order is preserved between cells.
 
     def __init__(self,
                  data_folders: list = ['path1','path2'],
                  dataset_names: list = ['name1','name2'],
                  crop_train_length: int = 6000,
                  meta_info_name: str = 'mix_meta_info.json',
-                 mapping_dict: str = 'velo_mapping_dict.json', # 只有velocity需要这个，来globally找next cell
+                 mapping_dict: str = 'velo_mapping_dict.json', # only needed for velocity; used to find next cell globally
                  mode: str = 'train',
-                 data_types: list = ['trajectory','perturb'], # sc-rna, velocity, perturb
-                 global_dataset: str = 'velo_dataset_all', # 只有velocity需要这个，来globally找next cell
+                 data_types: list = ['trajectory','perturb'], # supported types: sc-rna, velocity, perturb
+                 global_dataset: str = 'velo_dataset_all', # only needed for velocity; used to find next cell globally
                  vq_vae_path: str = '/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel'
                 ):
 
@@ -416,7 +416,7 @@ class h5ad_data_vq(Dataset): # DatasetList里可以给多个huggingface dataset
             logger.info(f'cropped data_block_size  is {crop_train_length}')
         
         self.reference_gene = pd.read_csv(str(BASE_DIR / 'OS_scRNA_gene_index.18791.tsv'), sep='\t')['gene_name'].values
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))  # 当前进程的 GPU 编号
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))  # GPU index of the current process
         device = torch.device(f"cuda:{local_rank}")
         print('current device: ', device)
         self.vq_model = VQModel.from_pretrained(vq_vae_path,cvq_distance = 'cos',cvq_anchor='probrandom')#.to(device=device)
@@ -466,7 +466,7 @@ class h5ad_data_vq(Dataset): # DatasetList里可以给多个huggingface dataset
         
         start_tokens = ['<S>']
 
-        # 保存instruction信息
+        # store instruction info
         instruction = {}
         end_tokens = ['<E>']
         token_cell = processed_cell['values'].astype(str) #[str(index) for index in processed_cell['values']]
@@ -489,21 +489,21 @@ class h5ad_data_vq(Dataset): # DatasetList里可以给多个huggingface dataset
         
         concated_cell = {
             'tokens': token_ids,  
-            'c1_len': c1_len, # 不带 inter tokens
-            'c2_start': c1_len, # 加上inter_tokens
+            'c1_len': c1_len, # without inter tokens
+            'c2_start': c1_len, # including inter tokens
             'trunc_full_len': full_length,
             'cell_pos': cell_pos,
-            'instructions': instruction,  # 新增：保存instruction信息
+            'instructions': instruction,  # save instruction info
         }
         return concated_cell
 
 
-class Tahoe100m_vq(Dataset): # DatasetList里可以给多个huggingface dataset
-    ## 目前兼容： Velocity ✅，scperturb✅
-    ## 对于第二个细胞，我不再使用全长基因，而是只把Top 100的 genes 放进去。
-    ## 解决从哪儿获取Top 100 list的问题。✅
-    ## FIXME 这样其实只兼容perturbation任务，不兼容velocity了，但也可以先都做完预训练，然后再做这个。
-    ## FIXME 给中间连接token加上positional encoding，这样就可以区分前后了。不然第二个cell不知道要按什么顺序生成。
+class Tahoe100m_vq(Dataset): # Accepts multiple HuggingFace datasets
+    ## Currently compatible: Velocity ✅, scperturb ✅
+    ## For the second cell, only the Top 100 genes are used instead of the full gene set.
+    ## Resolved: how to obtain the Top 100 gene list. ✅
+    ## FIXME: currently only compatible with perturbation tasks, not velocity; pre-training can come first.
+    ## FIXME: add positional encoding to inter-cell tokens so order is preserved between cells.
 
     def __init__(self,
                  data_folders: list = ['path1','path2'],
@@ -511,9 +511,9 @@ class Tahoe100m_vq(Dataset): # DatasetList里可以给多个huggingface dataset
                  crop_train_length: int = 6000,
                  n_express_level: int = 10,
                  meta_info_name: str = 'mix_meta_info.json',
-                 mapping_dict: str = 'velo_mapping_dict.json', # 只有velocity需要这个，来globally找next cell
+                 mapping_dict: str = 'velo_mapping_dict.json', # only needed for velocity; used to find next cell globally
                  mode: str = 'train',
-                 global_dataset: str = 'velo_dataset_all', # 只有velocity需要这个，来globally找next cell
+                 global_dataset: str = 'velo_dataset_all', # only needed for velocity; used to find next cell globally
                  dataset: ADataset = None,
                  vq_vae_path: str = '/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel'
                 ):
@@ -535,7 +535,7 @@ class Tahoe100m_vq(Dataset): # DatasetList里可以给多个huggingface dataset
             logger.info(f'cropped data_block_size  is {crop_train_length}')
         
         self.reference_gene = pd.read_csv('OS_scRNA_gene_index.18791.tsv',sep='\t')['gene_name'].values
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))  # 当前进程的 GPU 编号
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))  # GPU index of the current process
         device = torch.device(f"cuda:{local_rank}")
         print('current device: ', device)
         self.vq_model = VQModel.from_pretrained(vq_vae_path,cvq_distance = 'cos',cvq_anchor='probrandom')#.to(device=device)
@@ -625,7 +625,7 @@ class Tahoe100m_vq(Dataset): # DatasetList里可以给多个huggingface dataset
         
         start_tokens = ['<S>']
 
-        # 保存instruction信息
+        # store instruction info
         instruction = processed_cell['smile']
         end_tokens = ['<E>']
         token_cell = processed_cell['values'].astype(str) #[str(index) for index in processed_cell['values']]
@@ -648,28 +648,30 @@ class Tahoe100m_vq(Dataset): # DatasetList里可以给多个huggingface dataset
         
         concated_cell = {
             'tokens': token_ids,  
-            'c1_len': c1_len, # 不带 inter tokens
-            'c2_start': c1_len, # 加上inter_tokens
+            'c1_len': c1_len, # without inter tokens
+            'c2_start': c1_len, # including inter tokens
             'trunc_full_len': full_length,
             'cell_pos': cell_pos,
-            'instructions': instruction,  # 新增：保存instruction信息
+            'instructions': instruction,  # save instruction info
         }
         return concated_cell
 
 
-class h5ad_traj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
+class h5ad_traj_vq(Dataset): # Accepts multiple HuggingFace datasets
 
     def __init__(self,
                  data_folders: list = ['path1','path2'],
                  dataset_names: list = ['name1','name2'],
                  crop_train_length: int = 6000,
                  meta_info_name: str = 'mix_meta_info.json',
-                 mapping_dict: str = 'velo_mapping_dict.json', # 只有velocity需要这个，来globally找next cell
+                 mapping_dict: str = 'velo_mapping_dict.json', # only needed for velocity; used to find next cell globally
                  mode: str = 'train',
-                 global_dataset: str = 'velo_dataset_all', # 只有velocity需要这个，来globally找next cell
-                 data_types: list = ['trajectory','perturb'], # sc-rna, velocity, perturb
+                 global_dataset: str = 'velo_dataset_all', # only needed for velocity; used to find next cell globally
+                 data_types: list = ['trajectory','perturb'], # supported types: sc-rna, velocity, perturb
                  dataset: ADataset = None,
-                 vq_vae_path: str = '/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel'
+                 vq_vae_path: str = '/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel',
+                 perturb_config: str = None,   # path to a YAML file with gene_modules and amplify_rules
+                 trajectory_pkl: str = None,   # path to the pkl file containing (trajectory_list, target_id)
                 ):
 
         velo_data_indx = data_types.index('trajectory')
@@ -694,82 +696,44 @@ class h5ad_traj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
             logger.info(f'cropped data_block_size  is {crop_train_length}')
         
         self.reference_gene = pd.read_csv(str(BASE_DIR / 'OS_scRNA_gene_index.18791.tsv'), sep='\t')['gene_name'].values
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))  # 当前进程的 GPU 编号
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))  # GPU index of the current process
         device = torch.device(f"cuda:{local_rank}")
         print('current device: ', device)
         self.vq_model = VQModel.from_pretrained(vq_vae_path,cvq_distance = 'cos',cvq_anchor='probrandom')#.to(device=device)
 
         self.global_dataset = map_adata_to_reference_genes(self.global_dataset, self.reference_gene)
-        HSC_to_CLP_up = [
-            "SPI1",    # PU.1：驱动淋系启动（但强度中等，过高会抑制 B/T）
-            "IKZF1",   # Ikaros：CLP 定义基因
-            "IKZF3",   # Aiolos：淋系强化
-            "TCF3",    # E2A：B/T 细胞基本 TF
-            "EBF1",    # B lineage 指定基因
-            "FLT3",    # LMPP/CLP marker，促进早期淋系扩增
-            "IL7R",    # IL7R+ 是 CLP 标志
-            "DNTT",    # TdT，强淋系标志
-            "LYL1",    # LMPP/CLP priming
-            "LMO2",
-        ]
-        HSC_to_CLP_down = [
-            "GATA1",   # 抑制红系/巨核方向
-            "GATA2",   # 推髓系 priming
-            "CEBPA",   # 髓系 master regulator
-            "CEBPB",
-            "GFI1",    # granulocyte program
-            "CSF1R",   # macrophage receptor
-        ]
-        HSC_to_DC_up = [
-            "IRF8",      # DC1 关键因子；高 IRF8 → DC1
-            "BATF3",     # cDC1 master regulator
-            "ID2",       # 抑制 pDC 程序，推动 DC1
-            "SPI1",      # PU.1：DC通用前向调控
-            "FLT3",      # FLT3L 信号促进 DC 生成
-            "ZBTB46",    # classical DC signature gene
-        ]
-        HSC_to_DC_down = [
-            "GATA1",
-            "GATA2",
-            "CEBPA",     # 高 CEBPA 会阻止 DC 分化转为 granulocyte
-            "TCF3",      # T/B cell program，需抑制
-            "EBF1",      # B 系统 TF
-        ]
-        HSC_to_Mono_up = [
-            "IRF8",      # monocyte / DC2 program
-            "CEBPB",     # monocyte & macrophage differentiation
-            "SPI1",      # PU.1：高水平偏向 monocyte/macrophage
-            "KLF4",      # 强制 KLF4 上调 → 单核命运
-            "CSF1R",     # M-CSF receptor，推动 monocyte fate
-            "RUNX1",
-            "LYZ",       # lysozyme, monocyte marker
-        ]
-        HSC_to_Mono_down = [
-            "IKZF1", "IKZF3",  # 淋系程序
-            "TCF3", "EBF1",    # B cell TF
-            "GATA1", "GATA2",  # 红系/巨核
-        ]
 
-        HSC_to_Ery_up = [
-            "GATA1",
-            "KLF1",
-            "GFI1B",
-            "NFE2",
-            "ZFPM1", # FOG1
-        ]
-        HSC_to_Ery_down = [
-            "SPI1", "IKZF1", "IKZF3", "TCF3", "EBF1", "FLT3", "IL7R"
-        ]
+        # Apply gene amplification rules from external config (if provided).
+        if perturb_config is not None:
+            import yaml as _yaml
+            with open(perturb_config, 'r') as _f:
+                _pcfg = _yaml.safe_load(_f)
+            _gene_modules = _pcfg.get('gene_modules', {})
+            _amplify_rules = _pcfg.get('amplify_rules', [])
 
+            self.global_dataset.X = (
+                self.global_dataset.X.toarray()
+                if sp.issparse(self.global_dataset.X)
+                else self.global_dataset.X
+            )
+            for rule in _amplify_rules:
+                cluster   = rule['cluster']
+                direction = rule['direction']   # "up" or "down"
+                gene_list = _gene_modules[rule['module']][direction]
+                add       = rule.get('add', 1.0)
+                mul       = rule.get('mul', 1.0)
+                mask = self.global_dataset.obs['clusters'] == cluster
+                self.global_dataset[mask].X = self.amplify_genes(
+                    self.global_dataset[mask], gene_list, add=add, mul=mul
+                )
+            self.global_dataset = self.global_dataset.X
 
-        self.global_dataset.X = self.global_dataset.X.toarray() if sp.issparse(self.global_dataset.X) else self.global_dataset.X
-        self.global_dataset[self.global_dataset.obs['clusters']=='HSC_1'].X = self.amplify_genes(self.global_dataset[self.global_dataset.obs['clusters']=='HSC_1'],HSC_to_CLP_up,add=2,mul=8)
-        self.global_dataset[self.global_dataset.obs['clusters']=='HSC_1'].X = self.amplify_genes(self.global_dataset[self.global_dataset.obs['clusters']=='HSC_1'],HSC_to_CLP_down,add=1,mul=0)
-        self.global_dataset[self.global_dataset.obs['clusters']=='HSC_2'].X = self.amplify_genes(self.global_dataset[self.global_dataset.obs['clusters']=='HSC_2'],HSC_to_CLP_up,add=2,mul=8)
-        self.global_dataset[self.global_dataset.obs['clusters']=='HSC_2'].X = self.amplify_genes(self.global_dataset[self.global_dataset.obs['clusters']=='HSC_2'],HSC_to_CLP_down,add=1,mul=0)
-        self.global_dataset = self.global_dataset.X
-
-        with open("/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/mixMulan_AR_traj/trainer/generation/data/bone_marrow.pkl", "rb") as f:
+        if trajectory_pkl is None:
+            raise ValueError(
+                "trajectory_pkl must be provided (path to the .pkl file "
+                "containing (trajectory_list, target_id))."
+            )
+        with open(trajectory_pkl, "rb") as f:
             self.trajectory_list, self.target_id = pickle.load(f)
 
             
@@ -810,7 +774,7 @@ class h5ad_traj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
         
         start_tokens = ['<S>']
 
-        # 保存instruction信息
+        # store instruction info
         instruction = {}
         end_tokens = ['<E>']
         token_cell = processed_cell['values'].astype(str) #[str(index) for index in processed_cell['values']]
@@ -832,28 +796,28 @@ class h5ad_traj_vq(Dataset): # DatasetList里可以给多个huggingface dataset
         
         concated_cell = {
             'tokens': token_ids,  
-            'c1_len': c1_len, # 不带 inter tokens
-            'c2_start': c1_len, # 加上inter_tokens
+            'c1_len': c1_len, # without inter tokens
+            'c2_start': c1_len, # including inter tokens
             'trunc_full_len': full_length,
             'cell_pos': cell_pos,
-            'instructions': instruction,  # 新增：保存instruction信息
+            'instructions': instruction,  # save instruction info
         }
         return concated_cell
 
     def amplify_genes(self, adata, gene_list, add=1.0, mul=5.0):
-        """对指定基因进行表达提升：先 +add，再 ×mul"""
-        # 基因名 → index
+        """Amplify expression of specified genes: first add `add`, then multiply by `mul`."""
+        # gene name → index
         gene_to_idx = {g: i for i, g in enumerate(adata.var_names)}
 
-        # 找到基因索引（排除不存在的基因）
+        # find gene indices (skip genes not present)
         idx = [gene_to_idx[g] for g in gene_list if g in gene_to_idx]
         if not idx:
-            print("⚠️ 没有基因匹配！")
+            print("⚠️ No matching genes found!")
             return adata
 
         X = adata.X
 
-        # 稀疏矩阵处理
+        # sparse matrix handling
         if sp.issparse(X):
             # X[:, idx] += add
             for j in idx:

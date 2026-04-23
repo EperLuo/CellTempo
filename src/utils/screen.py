@@ -4,17 +4,17 @@ import torch
 def estimate_loss(eval_datasets, cfg, model, device, ctx):
 
     """
-    计算多个数据集的训练和验证损失。
+    Compute training and validation losses for multiple datasets.
 
-    参数:
-        eval_datasets (dict): 包含所有评估数据集的信息。
-        cfg (object): 配置对象，包含 `eval_iters` 等参数。
-        model (torch.nn.Module): 评估的模型。
-        device (torch.device): 设备信息。
-        ctx (context manager): 上下文管理器，如 `torch.cuda.amp.autocast()`
+    Args:
+        eval_datasets (dict): Evaluation dataset information for all datasets.
+        cfg (object): Config object containing parameters such as `eval_iters`.
+        model (torch.nn.Module): The model to evaluate.
+        device (torch.device): Device to run evaluation on.
+        ctx (context manager): Context manager, e.g. `torch.cuda.amp.autocast()`.
 
-    返回:
-        dict: 包含每个数据集的训练和验证损失。
+    Returns:
+        dict: Training and validation losses for each dataset.
     """
     out = {}
     model.eval()
@@ -32,10 +32,10 @@ def estimate_loss(eval_datasets, cfg, model, device, ctx):
                 except StopIteration:
                     data_iter = iter(data_loader)
                     data_one = next(data_iter)
-                # 更新迭代器
+                # update iterator
                 eval_datasets[ds_name][split]['iter'] = data_iter
 
-                # 数据处理
+                # data loading
                 idx = data_one['tokens'].pin_memory().to(device, non_blocking=True)
                 targets = data_one['labels_tokens'].pin_memory().to(device, non_blocking=True)
                 xlen = data_one['data_len'].pin_memory().to(device, non_blocking=True)
@@ -88,33 +88,34 @@ def run_evaluation(
     running_mfu=None
 ):
     """
-    执行评估步骤，计算多个数据集的训练和验证损失，并记录结果。
+    Run an evaluation step, computing training and validation losses for multiple
+    datasets, and log the results.
 
-    参数:
-        epoch (int): 当前的epoch编号。
-        iter_num (int): 当前的迭代步数。
-        eval_datasets (dict): 包含所有评估数据集的信息。
-        cfg (object): 配置对象，包含 `eval_iters` 等参数。
-        model (torch.nn.Module): 评估的模型。
-        device (torch.device): 设备信息。
-        ctx (context manager): 上下文管理器，如 `torch.cuda.amp.autocast()`
-        dataset_names (list): 数据集名称列表。
-        logger (logging.Logger): 日志记录器。
-        wandb_log (bool): 是否启用 WandB 日志记录。
-        wandb (object): WandB 实例。
-        all_eval_loss (dict): 存储所有数据集的评估损失。
-        all_eval_iter (dict): 存储所有数据集的评估迭代步数。
-        lr (float): 当前的学习率。
-        running_mfu (float): 当前的 MFU（Memory Footprint Utilization）。
+    Args:
+        epoch (int): Current epoch index.
+        iter_num (int): Current iteration step.
+        eval_datasets (dict): Evaluation dataset information for all datasets.
+        cfg (object): Config object containing parameters such as `eval_iters`.
+        model (torch.nn.Module): The model to evaluate.
+        device (torch.device): Device to run evaluation on.
+        ctx (context manager): Context manager, e.g. `torch.cuda.amp.autocast()`.
+        dataset_names (list): List of dataset names.
+        logger (logging.Logger): Logger instance.
+        wandb_log (bool): Whether to enable W&B logging.
+        wandb (object): W&B instance.
+        all_eval_loss (dict): Storage for evaluation losses across all datasets.
+        all_eval_iter (dict): Storage for evaluation iteration steps across all datasets.
+        lr (float): Current learning rate.
+        running_mfu (float): Current MFU (Model FLOPs Utilization).
 
-    返回:
+    Returns:
         None
     """
     
-    # 调用 estimate_loss 计算损失
+    # compute losses
     losses = estimate_loss(eval_datasets, cfg, model, device, ctx)
     
-    # 遍历每个数据集并记录损失
+    # log losses for each dataset
     for ds_name in dataset_names:
         train_loss = losses[ds_name]['train']
         val_loss = losses[ds_name]['val']
@@ -127,10 +128,10 @@ def run_evaluation(
                 f'{ds_name}/train_loss': train_loss,
                 f'{ds_name}/val_loss': val_loss,
                 "lr": lr,
-                "mfu": running_mfu * 100,  # 转换为百分比
+                "mfu": running_mfu * 100,  # convert to percentage
             })
         
-        # 更新评估结果存储字典
+        # update evaluation result storage
         all_eval_iter[ds_name].append(iter_num)
         all_eval_loss[ds_name]['train'].append(train_loss)
         all_eval_loss[ds_name]['val'].append(val_loss)
@@ -154,25 +155,27 @@ def save_checkpoint(
     logger,
 ):
     """
-    保存训练检查点。
+    Save a training checkpoint.
 
-    参数:
-        iter_num (int): 当前的迭代步数。
-        cfg (object): 配置对象，包含 `always_save_checkpoint` 和 `save_ckpt_iter` 等参数。
-        raw_model (torch.nn.Module): 原始模型（未封装在分布式包装器中）。
-        optimizer (torch.optim.Optimizer): 优化器实例。
-        model_args (dict): 模型的初始化参数或其他相关参数。
-        best_val_loss (float): 当前最佳的验证损失。
-        all_eval_iter (dict): 存储各数据集评估的迭代步数。
-        all_eval_loss (dict): 存储各数据集的训练和验证损失。
-        ckpt_save_dir (str): 检查点保存的目录。
-        logger (logging.Logger): 日志记录器。
-        master_process (bool): 是否为主进程（在分布式训练中用于控制日志和保存）。
+    Args:
+        iter_num (int): Current iteration step.
+        cfg (object): Config object containing parameters such as `always_save_checkpoint`
+            and `save_ckpt_iter`.
+        raw_model (torch.nn.Module): Raw model (not wrapped in a distributed container).
+        optimizer (torch.optim.Optimizer): Optimizer instance.
+        model_args (dict): Model initialization arguments or other relevant parameters.
+        best_val_loss (float): Best validation loss seen so far.
+        all_eval_iter (dict): Evaluation iteration steps stored per dataset.
+        all_eval_loss (dict): Training and validation losses stored per dataset.
+        ckpt_save_dir (str): Directory to save the checkpoint.
+        logger (logging.Logger): Logger instance.
+        master_process (bool): Whether this is the main process (controls logging and
+            saving in distributed training).
 
-    返回:
+    Returns:
         None
     """
-    # 构建检查点字典
+    # build checkpoint dict
     checkpoint = {
         'model': raw_model.state_dict(),
         'optimizer': optimizer.state_dict(),
@@ -184,11 +187,11 @@ def save_checkpoint(
         'val_loss': {ds: losses['val'] for ds, losses in all_eval_loss.items()},
     }
     
-    # 构建检查点文件路径
+    # build checkpoint file path
     ckpt_filename = f'ckpt{iter_num}.pt'
     ckpt_path = os.path.join(ckpt_save_dir, ckpt_filename)
     logger.info(f"Saving checkpoint to {ckpt_path}")
     
-    # 保存检查点
+    # save checkpoint
     torch.save(checkpoint, ckpt_path)
 

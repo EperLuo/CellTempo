@@ -355,11 +355,11 @@ class VQModel(ModelMixin, ConfigMixin):
                 # sample_codebook_temp = 0.1,         # temperature for stochastically sampling codes, 0 would be equivalent to non-stochastic
                 shared_codebook = shared_codebook,              # whether to share the codebooks for all quantizers or not
                 commitment_weight=1,                    # 1 1
-                orthogonal_reg_weight=1e-3,             # 开启 orthogonal reg loss 1e-3 1e-2
-                orthogonal_reg_active_codes_only=True,  # 只对活跃码字做正交
-                codebook_diversity_loss_weight=1e-3,    # 开启 diversity loss 1e-3 1e-2
+                orthogonal_reg_weight=1e-3,             # enable orthogonal reg loss 1e-3 1e-2
+                orthogonal_reg_active_codes_only=True,  # apply orthogonal reg only to active codes
+                codebook_diversity_loss_weight=1e-3,    # enable diversity loss 1e-3 1e-2
                 codebook_diversity_temperature=100.,
-                in_place_codebook_optimizer=lambda params: torch.optim.AdamW(params, lr=1e-4) # 开启 inplace optimize
+                in_place_codebook_optimizer=lambda params: torch.optim.AdamW(params, lr=1e-4) # enable in-place codebook optimiser
             )
         else:
             self.quantize = VectorQuantizer(num_vq_embeddings, vq_embed_dim, beta=0.25, remap=None, sane_index_shape=False)

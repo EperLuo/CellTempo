@@ -1,8 +1,8 @@
 # default: config values
 log_interval: 50 # log every n iterations; default 20 
-eval_itervals: 50 # 隔多少iter做一次eval; default 100 
-eval_iters: 1 # 一次eval多少个batch
-eval_cell_num: 4000 # 一次eval有多少个cell
+eval_itervals: 50 # eval interval in iterations; default 100
+eval_iters: 1 # number of batches per eval
+eval_cell_num: 4000 # number of cells per eval
 save_ckpt_iter: 50 # save a checkpoint every n iterations
 output_dir: /hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/generated
 comment: traj_h5ad 
@@ -29,6 +29,13 @@ dataset_names: [bonemarrow_full.h5ad] # scBasetraj_exp SRX11523687_top100.h5ad F
 meta_info_name: mix_meta_info_vq_traj.json #mix_meta_info_expanded.json
 mapping_dict: cell_id_mapping_dict.json #velo_mapping_dict.json
 global_dataset: bonemarrow_full.h5ad # scBasetraj_exp SRX11523687_top100.h5ad velo_dataset_all
+
+# --- trajectory_perturb_h5ad specific settings ---
+# Path to the YAML file that defines gene_modules and amplify_rules (see configs/perturb_gene_config.yaml).
+# Set to null to skip gene amplification entirely.
+perturb_config: configs/perturb_gene_config.yaml
+# Path to the .pkl file that stores (trajectory_list, target_id).
+trajectory_pkl: /path/to/bone_marrow.pkl
 
 # vq_vae_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_26c24d_512n_new/checkpoint-700000/vqmodel
 vq_vae_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/vqvae_ckpt/vqvae_test/checkpoint-100/vqmodel

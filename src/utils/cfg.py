@@ -64,13 +64,13 @@ def build_cfg():
         '--ckpt_path',
         default=None,   
         type=pathlib.Path,          
-        help='给出ckpt的路径',
+        help='Path to the checkpoint.',
     )
     parser.add_argument(
         '--ele',
         default=0,   
         type=int,          
-        help='0代表没有, 1代表 绝对位置n编码ele, 2代表 transformer原始三角编码',
+        help='0: none, 1: absolute position encoding (ele), 2: original transformer sinusoidal encoding.',
     )
     cfg = parser.parse_args()
     

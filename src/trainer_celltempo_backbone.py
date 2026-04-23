@@ -11,11 +11,11 @@ from transformers.trainer_utils import is_main_process
 from transformers import Trainer, TrainingArguments, TrainerCallback
 import argparse
 
-# 设置项目根目录路径
+# set project root path
 root_path = os.path.abspath('/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/mixMulan_AR_traj/')
 sys.path.append(root_path)
 
-# 导入模型和数据相关模块
+# import model and data modules
 from utils.train_utils import initialize_datasets_from_config, get_dataset_config_from_yaml, initialize_datasets_from_config_perturb
 from model.CellTempo_backbone import CellTempo_backbone, CellTempoConfig
 from utils.dataset import collate_fn_train_traj_vq
@@ -23,18 +23,18 @@ from utils.dataset import collate_fn_train_traj_vq
 os.environ["HF_HOME"] = "/voyager-data/luoerpai/hf_cache/"
 os.environ["HF_DATASETS_CACHE"]="/voyager-data/luoerpai/hf_cache/"
 
-os.environ["PYARROW_NUM_THREADS"] = "112"     # 或者手动设一个合理的核心数
+os.environ["PYARROW_NUM_THREADS"] = "112"     # or set a reasonable core count manually
 os.environ["OMP_NUM_THREADS"] = "112"
 
-# --------------------- 配置加载与处理 ---------------------
+# --------------------- Config loading & processing ---------------------
 
 def load_yaml_config(file_path):
-    """加载 YAML 配置文件"""
+    """Load a YAML configuration file."""
     with open(file_path, 'r') as file:
         return yaml.safe_load(file)
 
 def get_model_config_from_yaml(yaml_config, vocab_size):
-    """从 YAML 配置中提取模型相关参数"""
+    """Extract model-related parameters from a YAML config dict."""
     return CellTempoConfig(
         vocab_size=vocab_size,
         block_size = yaml_config["block_size"],
@@ -55,28 +55,28 @@ class CellTempoTrainer(Trainer):
         """
         rewrite the compute_loss method to add the detailed loss components to the evaluation metrics
         """
-        # 调用标准的计算损失方法
+        # call standard loss computation
         outputs = model(**inputs)
         loss = outputs.loss
 
-        # 仅暂存本步的子损失（detach 成 float）
+        # temporarily store sub-losses for this step (detached as float)
         if model.training:
             logs = {}
             for k in ["loss_cls_postfix", "loss_exp_postfix"]:
                 if hasattr(outputs, k) and getattr(outputs, k) is not None:
                     v = getattr(outputs, k)
                     logs[f"train/{k}"] = float(v.detach().mean().item())
-            # 存到 trainer 实例，供回调在 optimizer.step 后读取
+            # store on the trainer instance; callbacks read after optimizer.step
             if logs:
                 self._last_losses = logs
 
-        # 在评估模式下，将详细损失组件添加到评估指标中
+        # in eval mode, add detailed loss components to eval metrics
         if not model.training and hasattr(outputs, "loss_cls_postfix") and hasattr(outputs, "loss_exp_postfix"):
-            # 将这些值添加到评估指标中
+            # add these values to eval metrics
             if not hasattr(self, "eval_metrics"):
                 self.eval_metrics = {}
             
-            # 存储详细损失组件
+            # store detailed loss components
             if outputs.loss_cls_postfix is not None:
                 self.eval_metrics["eval_loss_cls_postfix"] = outputs.loss_cls_postfix.detach().item()
             
@@ -86,19 +86,19 @@ class CellTempoTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
         
     def evaluation_loop(self, *args, **kwargs):
-        # 重置评估指标
+        # reset eval metrics
         self.eval_metrics = {}
         
-        # 调用原始的评估循环
+        # call the original evaluation loop
         output = super().evaluation_loop(*args, **kwargs)
         
-        # 将我们的额外指标添加到输出中
+        # append our extra metrics to the output
         if hasattr(self, "eval_metrics") and self.eval_metrics:
             output.metrics.update(self.eval_metrics)
         
         return output
     
-# --------------------- 回调与评估 ---------------------
+# --------------------- Callbacks & evaluation ---------------------
 class CustomEvalAndLogCallback(TrainerCallback):
     def __init__(self, eval_datasets, sample_size=None, eval_step_per=100):
         self.eval_datasets = eval_datasets
@@ -109,17 +109,17 @@ class CustomEvalAndLogCallback(TrainerCallback):
         # trainer: Trainer = kwargs["trainer"]
         trainer = self.trainer
 
-        # 只有当 Trainer 判定该写日志时才写（匹配 logging_steps/strategy）
+        # only write log when Trainer decides it should (matches logging_steps/strategy)
         if hasattr(trainer, "_last_losses") and trainer._last_losses and (trainer.state.global_step % trainer.state.logging_steps == 0):
-            trainer.log(trainer._last_losses)  # 只发到 report_to（wandb/tensorboard），不刷命令行
-            trainer._last_losses = {}          # 清掉缓存，避免重复
+            trainer.log(trainer._last_losses)  # send to report_to (wandb/tensorboard) only, not CLI
+            trainer._last_losses = {}          # clear cache to avoid duplicate logging
 
     def on_step_end(self, args, state, control, **kwargs):
         if state.global_step % self.eval_step_per == 0 or state.global_step == 0:
             trainer = self.trainer
             log_data = {"global_step": state.global_step}
 
-            # 评估常规数据集
+            # evaluate regular datasets
             for ds_name, dataset_dict in self.eval_datasets.items():
                 for split, dataset in dataset_dict.items():
                     if self.sample_size is not None:
@@ -134,11 +134,11 @@ class CustomEvalAndLogCallback(TrainerCallback):
                         for metric, value in metrics.items()
                     })
 
-            if is_main_process(local_rank=trainer.args.local_rank):  # 仅在主进程执行 WandB 日志操作
+            if is_main_process(local_rank=trainer.args.local_rank):  # only log to W&B from the main process
                 wandb.log(log_data)
             print("Evaluation Logs:", log_data)
 
-# 追加数据到JSON文件
+# append data to a JSON file
 def append_to_json_file(data, json_path):
     if os.path.exists(json_path):
         with open(json_path, 'r') as f:
@@ -155,7 +155,7 @@ def append_to_json_file(data, json_path):
         json.dump(existing_data, f, indent=4)
 
 
-# --------------------- 训练主逻辑 ---------------------
+# --------------------- Main training logic ---------------------
 
 parser = argparse.ArgumentParser(description="MixMulan Trainer")
 parser.add_argument(
@@ -243,8 +243,8 @@ training_args = TrainingArguments(
     
     ddp_backend = yaml_config['backend'],
     bf16=True,
-    no_cuda=False,  # 确保使用 CUDA
-    remove_unused_columns=False,  # 禁用字段清理
+    no_cuda=False,  # ensure CUDA is used
+    remove_unused_columns=False,  # disable automatic column removal
     ddp_find_unused_parameters=True,
 )
 
@@ -261,17 +261,17 @@ callback = CustomEvalAndLogCallback(
     eval_step_per=yaml_config['eval_itervals']
 )
 
-# 使用自定义 Trainer 替代标准 Trainer
+# use custom Trainer instead of the standard one
 trainer = CellTempoTrainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
-    eval_dataset=None,  # 使用自定义回调进行评估
+    eval_dataset=None,  # evaluation handled by custom callback
     callbacks=[callback],
     data_collator=collate_fn_train_traj_vq,
 )
 
-# 设置 trainer 的引用（确保回调可以访问到它）
+# set trainer reference so the callback can access it
 callback.trainer = trainer
 
 if yaml_config['init_from'] == 'resume':
