@@ -2,7 +2,7 @@
 
 **Autoregressive forecasting of single-cell state transitions**
 
-CellTempo is a **temporal single-cell foundation model** that learns cellular dynamics as a generative process and forecasts long-range cell-state transition trajectories from snapshot measurements in a fully **autoregressive** manner.
+CellTempo is a **temporal single-cell model** that learns cellular dynamics as a generative process and forecasts long-range cell-state transition trajectories from snapshot measurements in a fully **autoregressive** manner.
 
 - It first compresses each single-cell transcriptome into a compact sequence of **discrete cell codes** with a Vector-Quantized VAE (CellTempo-VQVAE).
 - It then models cellular temporal progression with a **decoder-only Transformer** (CellTempo-Backbone) that autoregressively predicts ordered sequences of cell codes, where each sequence corresponds to a biologically grounded multi-step trajectory.
@@ -12,6 +12,8 @@ With this design, CellTempo can:
 - **Forecast cell-state evolution** starting from any individual snapshot cell.
 - **Reconstruct cellular potential landscapes** that recover preferred directions and tendencies of cell-state progression (e.g. hematopoietic differentiation hierarchies).
 - **Predict long-term perturbation responses** — both genetic (perturbation of lineage-associated gene modules) and chemical (e.g. anti-cancer drugs in cancer cell lines) — and capture both immediate and delayed drug responses.
+
+Preprint: https://www.biorxiv.org/content/10.64898/2026.02.08.704720v1
 
 ![overview](overview.png)
 
