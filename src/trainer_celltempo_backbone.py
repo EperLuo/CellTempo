@@ -1,5 +1,6 @@
 import wandb
 import json
+import pickle
 
 import os
 import sys
@@ -10,6 +11,8 @@ from torch.utils.data import Subset
 from transformers.trainer_utils import is_main_process
 from transformers import Trainer, TrainingArguments, TrainerCallback
 import argparse
+import pandas as pd
+from pathlib import Path
 
 # set project root path
 root_path = os.path.abspath('/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/mixMulan_AR_traj/')
@@ -18,7 +21,10 @@ sys.path.append(root_path)
 # import model and data modules
 from utils.train_utils import initialize_datasets_from_config, get_dataset_config_from_yaml, initialize_datasets_from_config_perturb
 from model.CellTempo_backbone import CellTempo_backbone, CellTempoConfig
-from utils.dataset import collate_fn_train_traj_vq
+from utils.dataset import collate_fn_train_traj_vq, collate_fn_train_target_vq_perturb
+from utils.tokenizer import mixMulanTokenizer
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 os.environ["HF_HOME"] = "/voyager-data/luoerpai/hf_cache/"
 os.environ["HF_DATASETS_CACHE"]="/voyager-data/luoerpai/hf_cache/"
@@ -47,7 +53,8 @@ def get_model_config_from_yaml(yaml_config, vocab_size):
         cell_pos_num=yaml_config["cell_pos_num"],
         vq_vae_path=yaml_config["vq_vae_path"],
         data_folders=yaml_config["data_folders"], 
-        meta_info_name=yaml_config["meta_info_name"]
+        meta_info_name=yaml_config["meta_info_name"],
+        drug_emb_dim=yaml_config.get("drug_emb_dim", 0),
     )
 
 class CellTempoTrainer(Trainer):
@@ -224,8 +231,8 @@ training_args = TrainingArguments(
    
     per_device_train_batch_size=yaml_config['batch_size'],
     gradient_accumulation_steps = yaml_config['gradient_accumulation_steps'],
-    warmup_steps=yaml_config.get('warmup_iters', 0),
-    learning_rate = yaml_config['learning_rate'],
+    warmup_ratio=yaml_config.get('warmup_ratio', 0.05),
+    learning_rate = float(yaml_config['learning_rate']),
     weight_decay = yaml_config['weight_decay'],
     lr_scheduler_type="linear",
     max_grad_norm = yaml_config['grad_clip'],
@@ -261,20 +268,85 @@ callback = CustomEvalAndLogCallback(
     eval_step_per=yaml_config['eval_itervals']
 )
 
+callbacks_list = [callback]
+
+is_perturb = 'perturb' in yaml_config.get("data_types", [])
+
+if is_perturb:
+    # --- build perturbation generation eval callback ---
+    from utils.dataset import Tahoe100m_vq
+    from utils.eval_utils import PerturbGenerationEvalCallback
+    from model.CellTempo_VQVAE.model import VQModel
+
+    vq_model = VQModel.from_pretrained(
+        yaml_config['vq_vae_path'], cvq_distance='cos', cvq_anchor='probrandom'
+    )
+    vq_model.eval()
+
+    with open(str(BASE_DIR / 'data/mix_meta_info_vq_traj.json'), 'r') as f:
+        meta_info_gen = json.load(f)
+    chars = meta_info_gen['token_set']
+    gen_tokenizer = mixMulanTokenizer(chars)
+    ignore_ids = [i for i, c in enumerate(chars) if c[0] not in [str(d) for d in range(10)]]
+
+    sf_path = str(BASE_DIR / 'data/size_factor.pkl')
+    with open(sf_path, 'rb') as f:
+        sf_dict = pickle.load(f)
+    size_factor_val = sf_dict['other']
+
+    reference_gene = pd.read_csv(
+        str(BASE_DIR / 'src' / 'utils' / 'OS_scRNA_gene_index.18791.tsv'), sep='\t'
+    )['gene_name'].values
+
+    ds_config = get_dataset_config_from_yaml(yaml_config)
+    eval_repeat_per_pair = yaml_config.get('eval_repeat_per_pair', 50)
+    eval_datasets_gen = {}
+    for split in ['testB_eval']:
+        eval_datasets_gen[split] = Tahoe100m_vq(
+            data_folders=ds_config['data_folders'],
+            dataset_names=ds_config['dataset_names'],
+            crop_train_length=ds_config['block_size'],
+            meta_info_name=ds_config['meta_info_name'],
+            mapping_dict=ds_config['mapping_dict'],
+            mode=split,
+            global_dataset=ds_config['global_dataset'],
+            dataset=train_dataset.global_dataset,
+            vq_vae_path=ds_config['vq_vae_path'],
+            drug_emb_paths=ds_config.get('drug_emb_paths', []),
+            repeat_per_pair=eval_repeat_per_pair,
+        )
+
+    perturb_eval_callback = PerturbGenerationEvalCallback(
+        eval_datasets_gen=eval_datasets_gen,
+        vq_model=vq_model,
+        tokenizer=gen_tokenizer,
+        ignore_ids=ignore_ids,
+        size_factor_val=size_factor_val,
+        reference_gene=reference_gene,
+        max_new_tokens=yaml_config.get('max_new_tokens_eval', 26),
+        eval_batch_size=yaml_config.get('eval_batch_size', 32),
+        eval_step_per=yaml_config['eval_itervals'],
+        eval_before_train=yaml_config.get('eval_before_train', False),
+        sample_size=None,
+    )
+    callbacks_list.append(perturb_eval_callback)
+
 # use custom Trainer instead of the standard one
 trainer = CellTempoTrainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
     eval_dataset=None,  # evaluation handled by custom callback
-    callbacks=[callback],
-    data_collator=collate_fn_train_traj_vq,
+    callbacks=callbacks_list,
+    data_collator=collate_fn_train_traj_vq if 'trajectory' in yaml_config.get("data_types", ["trajectory"]) else collate_fn_train_target_vq_perturb,
 )
 
 # set trainer reference so the callback can access it
 callback.trainer = trainer
+if is_perturb:
+    perturb_eval_callback.trainer = trainer
 
-if yaml_config['init_from'] == 'resume':
+if yaml_config['init_from'] == 'resume' and not yaml_config.get('skip_optimizer_reload', False):
     trainer.train(resume_from_checkpoint=yaml_config['ckpt_path'])
 else:
     trainer.train()

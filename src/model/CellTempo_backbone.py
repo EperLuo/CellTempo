@@ -106,22 +106,21 @@ class CausalSelfAttention(nn.Module):
                 )
                 
             else:
-                causal_mask = torch.tril(torch.ones((T, T), dtype=torch.bool, device=x.device))
-                
-                # expand attention_mask to (B,T,T) to include padding mask and AND with causal mask
-                extended_attn_mask = attention_mask[:, None, :].expand(B, T, T)  # (B,T,T)
-                final_mask = extended_attn_mask & causal_mask.unsqueeze(0)  # (B,T,T)
+                T_k = k.size(2)
+                causal_mask = torch.tril(torch.ones((T, T_k), dtype=torch.bool, device=x.device))
 
-                # further expand to (B, h, T, T); h=1 because mask is shared across heads
-                final_mask = final_mask.unsqueeze(1)  # (B,1,T,T)
+                extended_attn_mask = attention_mask[:, None, :T_k].expand(B, T, T_k)
+                final_mask = extended_attn_mask & causal_mask.unsqueeze(0)
 
-                # use combined mask with is_causal=False since causality is handled manually
+                final_mask = final_mask.unsqueeze(1)  # (B,1,T,T_k)
+
                 y = torch.nn.functional.scaled_dot_product_attention(
                     q, k, v,
                     attn_mask=final_mask,
                     dropout_p=self.dropout if self.training else 0,
                     is_causal=False
                 )
+                y = torch.nan_to_num(y, nan=0.0)
 
         else:
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
@@ -132,6 +131,7 @@ class CausalSelfAttention(nn.Module):
             else:
                 att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att, dim=-1)
+            att = torch.nan_to_num(att, nan=0.0)
             att = self.attn_dropout(att)
             y = att @ v
 
@@ -198,6 +198,7 @@ class CellTempoConfig(PretrainedConfig):
     bias: bool = False
     train_mode: str = 'pretrain'
     cell_pos_num: int = 256
+    drug_emb_dim: int = 0  # 0 = no drug embedding injection; set to 1024 for UniMol
 
     pruned_heads: dict = field(default_factory=dict)
 
@@ -209,19 +210,28 @@ class CellTempoConfig(PretrainedConfig):
 
 
 class CE_logits_loss(nn.Module):
+    META_TOKENS = 4  # plate, cell_line, drug, dose
+
     def __init__(self, vocab_size, block_size=1000, train_mode='pretrain'):
         super().__init__()
         self.vocab_size = vocab_size
         self.block_size = block_size
-        self.ce_loss = nn.CrossEntropyLoss()
+        self.ce_loss = nn.CrossEntropyLoss(ignore_index=-100)
         self.train_mode = train_mode
 
     def forward(self, logits_cls, targets, xlen, c1_len, c2_start):
         B, T, C = logits_cls.shape
-        seq_lens = xlen.unsqueeze(-1)
-        c2_starts = (c2_start - 1).unsqueeze(-1)
-        prefix_lens = c1_len.unsqueeze(-1)
-        range_tensor = torch.arange(T, device=targets.device).unsqueeze(0).expand(B, T)
+
+        # mask prefix (meta + control block) in labels
+        # labels are shifted left by 1, so label[i] predicts token[i+1]
+        # prefix tokens: [meta(4), control(1), <S>, 26×code, <E>] = META_TOKENS + c1_len
+        # label position META_TOKENS + c1_len - 1 predicts the first postfix token ("perturb")
+        # mask labels[0 : META_TOKENS + c1_len - 1] per sample
+        prefix_end = self.META_TOKENS + c1_len - 1  # (B,)
+        range_t = torch.arange(T, device=targets.device).unsqueeze(0)  # (1, T)
+        prefix_mask = range_t < prefix_end.unsqueeze(1)  # (B, T)
+        targets = targets.clone()
+        targets[prefix_mask] = -100
 
         batchLogi = logits_cls.view(-1, logits_cls.shape[-1])
         batchTar = targets.view(-1).long()
@@ -267,6 +277,9 @@ class CellTempo_backbone(PreTrainedModel):
             train_mode=config.train_mode,
         )
 
+        if getattr(config, 'drug_emb_dim', 0) > 0:
+            self.drug_proj = nn.Linear(config.drug_emb_dim, config.n_embd)
+
         self.post_init()
 
          # report number of parameters
@@ -300,6 +313,7 @@ class CellTempo_backbone(PreTrainedModel):
         c1_len=None,
         c2_start=None,
         cell_pos=None,
+        drug_emb: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
         use_cache: bool = False,
@@ -309,6 +323,13 @@ class CellTempo_backbone(PreTrainedModel):
         b, t = input_ids.size()
         
         tok_emb = self.transformer.wte(input_ids)
+
+        # inject drug molecular representation at the 'drug' token position (index 2)
+        # sequence layout for perturb: [plate, cell_line, drug, control, <S>, ...]
+        if drug_emb is not None and hasattr(self, 'drug_proj'):
+            drug_emb_proj = self.drug_proj(drug_emb)  # (B, n_embd)
+            tok_emb[:, 2, :] = drug_emb_proj
+
         pos_emb = self.transformer.wpe(cell_pos) if cell_pos is not None else 0
         x = self.transformer.drop(tok_emb + pos_emb)
 
@@ -360,10 +381,17 @@ class CellTempo_backbone(PreTrainedModel):
         top_k=None,
         use_cache=True,
         debug=False,
+        attention_mask=None,
+        drug_emb=None,
         **generate_kwargs
     ):
         batch_size = input_ids.size(0)
         past_key_values = None
+
+        if attention_mask is None:
+            attention_mask = torch.ones(
+                input_ids.shape[:2], dtype=torch.bool, device=input_ids.device
+            )
 
         if debug:
             print("=== Generation Debug Mode ON ===")
@@ -387,11 +415,16 @@ class CellTempo_backbone(PreTrainedModel):
                 print(f"cur_input_ids shape: {cur_input_ids.shape}, values: {cur_input_ids}")
                 print(f"cur_cell_pos shape: {cur_cell_pos.shape}, values: {cur_cell_pos}")
 
+            # only inject drug_emb during the first prefill pass
+            cur_drug_emb = drug_emb if past_key_values is None else None
+
             # one step forward
             outputs = self(
                 input_ids=cur_input_ids,
                 cell_pos=cur_cell_pos,
+                drug_emb=cur_drug_emb,
                 past_key_values=past_key_values,
+                attention_mask=attention_mask,
                 use_cache=use_cache,
                 return_dict=True,
                 **generate_kwargs
@@ -417,6 +450,10 @@ class CellTempo_backbone(PreTrainedModel):
 
             # append to current sequence
             input_ids = torch.cat([input_ids, next_token], dim=1)
+            attention_mask = torch.cat([
+                attention_mask,
+                torch.ones((batch_size, 1), dtype=attention_mask.dtype, device=attention_mask.device),
+            ], dim=1)
 
             # create new cell_pos for the next token
             # obtain the last token's position value, ensure not exceeding max value

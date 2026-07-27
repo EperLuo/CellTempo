@@ -4,14 +4,14 @@ eval_itervals: 50 # eval interval in iterations; default 100
 eval_iters: 1 # number of batches per eval
 eval_cell_num: 4000 # number of cells per eval
 save_ckpt_iter: 50 # save a checkpoint every n iterations
-output_dir: /hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/generated
-comment: traj_h5ad 
-save_name: bonemarrow
+output_dir: /data/lep/CellTempo_noempty/CellTempo/output
+comment: traj_h5ad_perturb 
+save_name: iPSC_perturb_traj_D30all_intervention_act_strong
 prefix_name:  null #ERX10019090
 sampling_num: 0 # using all sample
 
 # ckpt_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/velo_pretrain_ckpt_202511/traj_pretrain_ARold_lr1e4_vq_26c24d512b_new_70w_big_dp01_head_posnew/checkpoint-10000
-ckpt_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/backbone_ckpt/backbone_test/checkpoint-20
+ckpt_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/celltempo_backbone_train_on_scbasetraj/checkpoint-10000
 
 # DDP settings
 backend: 'nccl' # 'nccl', 'gloo', etc.
@@ -24,23 +24,25 @@ eval_batch_size: 20
 # training dataset
 single_dataset_name: null
 data_types: [trajectory]
-data_folders: [/hpc-cache-pfs/home/bianhaiyang/veloMulan/dataHub/scBaseCount_scvelo_rowcount_filtered] #veloBD_lognorm_ver2    veloBD_rowcount
-dataset_names: [bonemarrow_full.h5ad] # scBasetraj_exp SRX11523687_top100.h5ad Forebrain_top100.h5ad velo3000 velo_test_loop   velo_dataset   
+data_folders: [/data/lep/CellTempo_noempty/CellTempo/data] #veloBD_lognorm_ver2    veloBD_rowcount
+dataset_names: [iPSC/D30_all.h5ad] # scBasetraj_exp SRX11523687_top100.h5ad Forebrain_top100.h5ad velo3000 velo_test_loop   velo_dataset   
 meta_info_name: mix_meta_info_vq_traj.json #mix_meta_info_expanded.json
-mapping_dict: cell_id_mapping_dict.json #velo_mapping_dict.json
-global_dataset: bonemarrow_full.h5ad # scBasetraj_exp SRX11523687_top100.h5ad velo_dataset_all
+mapping_dict: path/to/cell_id_mapping_dict.json #velo_mapping_dict.json
+global_dataset: iPSC/D30_all.h5ad # scBasetraj_exp SRX11523687_top100.h5ad velo_dataset_all
 
 # --- trajectory_perturb_h5ad specific settings ---
 # Path to the YAML file that defines gene_modules and amplify_rules (see configs/perturb_gene_config.yaml).
 # Set to null to skip gene amplification entirely.
-perturb_config: configs/perturb_gene_config.yaml
+perturb_config: /data/lep/CellTempo_noempty/CellTempo/configs/perturb_gene_iPSC_config.yaml # null
 # Path to the .pkl file that stores (trajectory_list, target_id).
-trajectory_pkl: /path/to/bone_marrow.pkl
+trajectory_pkl: /data/lep/CellTempo_noempty/CellTempo/data/iPSC/d30_sample10_index.pkl
+# trajectory_pkl: /data/lep/CellTempo_noempty/CellTempo/data/iPSC/gpc_x2_traj.pkl
+
 
 # vq_vae_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_26c24d_512n_new/checkpoint-700000/vqmodel
-vq_vae_path: /hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/outputs/vqvae_ckpt/vqvae_test/checkpoint-100/vqmodel
+vq_vae_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/vqvae_train_on_scbasecount/checkpoint-700000/vqmodel
 
-max_new_tokens: 52
+max_new_tokens: 260
 
 train_mode: 'pretrain'
 

@@ -1,0 +1,64 @@
+# Perturbation generation config — h5ad + single SMILES mode
+# Usage: given an h5ad file and a drug SMILES, predict perturbed cell states.
+eval_cell_num: 3000
+output_dir: /data/lep/CellTempo_noempty/CellTempo/output/
+comment: perturb_h5ad
+save_name: iPSC_GPC_TTNPB
+
+# checkpoint to load (update to your best ckpt)
+ckpt_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/from_scratch_Tahoe100m_dose_50ep_neweval_maskprefix_vqfinetuned/checkpoint-3900
+
+# DDP settings
+backend: 'nccl'
+
+batch_size: 32
+block_size: 286
+num_workers: 0
+eval_batch_size: 32
+
+# dataset (meta_info comes from data_folders[0])
+data_types: [perturb]
+data_folders: [/data/lep/CellTempo_noempty/CellTempo/data]
+dataset_names: [Tahoe100m]
+meta_info_name: mix_meta_info_vq_traj.json
+mapping_dict: /path/to/mapping_dict
+global_dataset: Tahoe100m
+# vq_vae_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/vqvae_train_on_scbasecount/checkpoint-700000/vqmodel
+vq_vae_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/vqvae_finetune_tahoe/checkpoint-200000/vqmodel
+
+# === NEW: h5ad + SMILES inputs ===
+h5ad_path: /data/lep/CellTempo_noempty/CellTempo/data/iPSC/D30_all.h5ad
+smiles: "CC(=Cc1ccc(cc1)C(=O)O)c1ccc2c(c1)C(C)(C)CCC2(C)C"
+plate: "plate12"
+cell_line: "CVCL_0131"
+dose: "dose_5.0"
+
+# drug molecular representation (UniMol 310M, dim=1024)
+# The pipeline will first look for the SMILES in these pre-computed caches.
+# If not found, it will compute embedding on-the-fly using unimol_tools (310M).
+drug_emb_paths:
+  - /data/lep/CellTempo_noempty/CellTempo/data/Tahoe100m/unimol310m_emb.pt
+  - /data/lep/CellTempo_noempty/CellTempo/data/Tahoe100m/unimol310m_emb_testA.pt
+  - /data/lep/CellTempo_noempty/CellTempo/data/Tahoe100m/unimol310m_emb_testB.pt
+drug_emb_dim: 1024
+
+max_new_tokens: 26
+
+train_mode: 'pretrain'
+
+# model
+n_embd: 1120
+n_head: 20
+n_layer: 24
+dropout: 0.0
+bias: False
+cell_pos_num: 21
+use_flash: False
+
+# system
+device: 'cuda'
+dtype: 'bfloat16'
+
+# wandb logging
+wandb_log: False
+wandb_project: 'celltempo'

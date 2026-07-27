@@ -27,7 +27,7 @@ import torch.nn.functional as F
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import DistributedType, ProjectConfiguration, set_seed
-from model.CellTempo_VQVAE.dataset.cell_data import load_data
+from model.CellTempo_VQVAE.dataset.cell_data import load_data, load_data_tahoe, ShardBatchSampler
 from huggingface_hub import create_repo
 from packaging import version
 from tqdm import tqdm
@@ -443,6 +443,13 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--data_source",
+        type=str,
+        default="scbasetraj",
+        choices=["scbasetraj", "tahoe"],
+        help="Which dataset to use: scbasetraj (original) or tahoe (Tahoe100m)",
+    )
+    parser.add_argument(
         "--checkpoints_total_limit",
         type=int,
         default=None,
@@ -625,9 +632,10 @@ def main():
     args.train_batch_size * accelerator.num_processes
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    # DataLoaders creation:
-    # with accelerator.main_process_first():
-    train_dataset = load_data(data_dir=args.train_data_dir)
+    if args.data_source == "tahoe":
+        train_dataset = load_data_tahoe(data_dir=args.train_data_dir, mode="train")
+    else:
+        train_dataset = load_data(data_dir=args.train_data_dir)
 
     def collate_fn(examples):
         pixel_values = torch.stack([example["exp"] for example in examples if example["exp"] is not None])
@@ -640,15 +648,33 @@ def main():
         return {"pixel_values": pixel_values, "gene_id": gene_id}
 
     # DataLoaders creation:
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        shuffle=True,
-        collate_fn=collate_fn,
-        batch_size=args.train_batch_size,
-        num_workers=args.dataloader_num_workers,
-        pin_memory=True,
-        # prefetch_factor=2,
-    )
+    use_shard_sampler = hasattr(train_dataset, 'shard_paths')
+    if use_shard_sampler:
+        shard_sampler = ShardBatchSampler(
+            train_dataset.shard_paths,
+            batch_size=args.train_batch_size,
+            drop_last=True,
+        )
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_sampler=shard_sampler,
+            collate_fn=collate_fn,
+            num_workers=args.dataloader_num_workers,
+            pin_memory=True,
+            persistent_workers=True if args.dataloader_num_workers > 0 else False,
+            prefetch_factor=4 if args.dataloader_num_workers > 0 else None,
+        )
+    else:
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataset,
+            shuffle=True,
+            collate_fn=collate_fn,
+            batch_size=args.train_batch_size,
+            num_workers=args.dataloader_num_workers,
+            pin_memory=True,
+            persistent_workers=True if args.dataloader_num_workers > 0 else False,
+            prefetch_factor=4 if args.dataloader_num_workers > 0 else None,
+        )
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
@@ -752,7 +778,8 @@ def main():
                     loss = F.l1_loss(pixel_values, fmap)
                 elif args.vae_loss == "nb" and args.data_type == 'rna':
                     fmap = F.softmax(fmap, dim=1) * pixel_values.sum(1).unsqueeze(-1) #2000
-                    px = NegativeBinomial(mu=fmap, theta=torch.exp(model.theta))
+                    _model = model.module if hasattr(model, 'module') else model
+                    px = NegativeBinomial(mu=fmap, theta=torch.exp(_model.theta))
                     loss = - px.log_prob(pixel_values).sum(1).mean() * 0.0001 # 0.0002 0.0002
                 elif args.vae_loss == "guss" and args.data_type == 'rna':
                     fmap = F.softmax(fmap, dim=1) * pixel_values.sum(1).unsqueeze(-1) #2000
@@ -765,10 +792,22 @@ def main():
                 if args.vq:
                     loss += commit_loss
 
+                # Per-sample Pearson correlation between input and reconstruction
+                with torch.no_grad():
+                    x = pixel_values.float()
+                    y = fmap.detach().float()
+                    x_centered = x - x.mean(dim=1, keepdim=True)
+                    y_centered = y - y.mean(dim=1, keepdim=True)
+                    cov = (x_centered * y_centered).sum(dim=1)
+                    std_x = x_centered.norm(dim=1)
+                    std_y = y_centered.norm(dim=1)
+                    pearson_r = (cov / (std_x * std_y + 1e-8)).mean()
+
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_gen_loss = accelerator.gather(loss.repeat(args.train_batch_size)).float().mean()
                 avg_re_loss = accelerator.gather(re_loss.repeat(args.train_batch_size)).float().mean()
                 avg_commit_loss = accelerator.gather(commit_loss.repeat(args.train_batch_size)).float().mean()
+                avg_pearson_r = accelerator.gather(pearson_r.unsqueeze(0)).float().mean()
                 accelerator.backward(loss)
 
                 if args.max_grad_norm is not None and accelerator.sync_gradients:
@@ -813,7 +852,9 @@ def main():
                         logs["step_reconstruct_loss"] = avg_re_loss.item()
                     if avg_commit_loss is not None:
                         logs["step_avg_commit_loss"] = avg_commit_loss.item()
-                        
+                    if avg_pearson_r is not None:
+                        logs["pearson_r"] = avg_pearson_r.item()
+
                     accelerator.log(logs, step=global_step)
 
                     # resetting batch / data time meters per log window

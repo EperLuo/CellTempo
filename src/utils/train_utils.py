@@ -3,7 +3,7 @@ from tqdm import tqdm
 
 # import model and data modules
 # from utils.dataset import mixDataTypeTargetDataset
-from .dataset import Tahoe100m_vq, scBasetraj_vq, h5ad_data_vq, h5ad_traj_vq
+from .dataset import Tahoe100m_vq, scBasetraj_vq, h5ad_data_vq, h5ad_traj_vq, H5adPerturb_vq
 from datasets import load_dataset,load_from_disk, concatenate_datasets
 
 import psutil, gc
@@ -47,6 +47,7 @@ def get_dataset_config_from_yaml(yaml_config):
         "global_dataset": yaml_config["global_dataset"],
         "data_types": yaml_config["data_types"],
         "vq_vae_path": yaml_config.get("vq_vae_path", "/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel"),
+        "drug_emb_paths": yaml_config.get("drug_emb_paths", []),
     }
 
 
@@ -158,44 +159,78 @@ def initialize_datasets_from_config_perturb(dataset_config, skip_train=False):
     """Initialize training and validation datasets for perturbation tasks."""
     eval_datasets = {}
     dataset = load_dataset("parquet", 
-                       data_files=os.path.join(dataset_config["data_folders"][0],"data/data/train-*.parquet"), 
+                       data_files=os.path.join(dataset_config["data_folders"][0],dataset_config["dataset_names"][0],"data/train-*.parquet"), 
                        split="train",
                        cache_dir=os.path.join(dataset_config["data_folders"][0],"hf_cache"))
         
     for ds_idx, ds_name in enumerate(dataset_config["dataset_names"]):
-        eval_datasets[ds_name] = {
-            'train': Tahoe100m_vq(
-                data_folders=[dataset_config["data_folders"][ds_idx]],
-                dataset_names=[ds_name],
-                crop_train_length=dataset_config["block_size"],
-                n_express_level=dataset_config["n_expression_level"],
-                meta_info_name=dataset_config["meta_info_name"],
-                mapping_dict=dataset_config["mapping_dict"],
-                mode='train',
-                global_dataset=dataset_config["global_dataset"],
-                dataset=dataset,
-                vq_vae_path=dataset_config["vq_vae_path"]
-            ),
-            'val': Tahoe100m_vq(
-                data_folders=[dataset_config["data_folders"][ds_idx]],
-                dataset_names=[ds_name],
-                crop_train_length=dataset_config["block_size"],
-                n_express_level=dataset_config["n_expression_level"],
-                meta_info_name=dataset_config["meta_info_name"],
-                mapping_dict=dataset_config["mapping_dict"],
-                mode='testA',
-                global_dataset=dataset_config["global_dataset"],
-                dataset=dataset,
-                vq_vae_path=dataset_config["vq_vae_path"]
-            )
-        }
+        val_ds = Tahoe100m_vq(
+            data_folders=[dataset_config["data_folders"][ds_idx]],
+            dataset_names=[ds_name],
+            crop_train_length=dataset_config["block_size"],
+            meta_info_name=dataset_config["meta_info_name"],
+            mapping_dict=dataset_config["mapping_dict"],
+            mode=dataset_config.get("pairs_mode", "testB_subset"),
+            global_dataset=dataset_config["global_dataset"],
+            dataset=dataset,
+            vq_vae_path=dataset_config["vq_vae_path"],
+            drug_emb_paths=dataset_config.get("drug_emb_paths", []),
+            repeat_per_pair=dataset_config.get("repeat_per_pair", 1),
+        )
+        if skip_train:
+            eval_datasets[ds_name] = {'val': val_ds}
+        else:
+            eval_datasets[ds_name] = {
+                'train': Tahoe100m_vq(
+                    data_folders=[dataset_config["data_folders"][ds_idx]],
+                    dataset_names=[ds_name],
+                    crop_train_length=dataset_config["block_size"],
+                    meta_info_name=dataset_config["meta_info_name"],
+                    mapping_dict=dataset_config["mapping_dict"],
+                    mode='train',
+                    global_dataset=dataset_config["global_dataset"],
+                    dataset=dataset,
+                    vq_vae_path=dataset_config["vq_vae_path"],
+                    drug_emb_paths=dataset_config.get("drug_emb_paths", []),
+                ),
+                'val': val_ds,
+            }
     
     # if skip_train is True, return only the val split of eval_datasets
     if skip_train:
-        # extract the val split for each dataset
         val_only_datasets = {ds_name: ds_dict['val'] for ds_name, ds_dict in eval_datasets.items()}
         return None, val_only_datasets
 
     train_dataset = eval_datasets[dataset_config["dataset_names"][0]]['train']
 
+    return train_dataset, eval_datasets
+
+
+def initialize_datasets_from_config_perturb_h5ad(dataset_config, skip_train=False):
+    """Initialize dataset for h5ad + single-SMILES perturbation inference."""
+    eval_datasets = {}
+
+    for ds_idx, ds_name in enumerate(dataset_config["dataset_names"]):
+        eval_datasets[ds_name] = {
+            'val': H5adPerturb_vq(
+                h5ad_path=dataset_config["h5ad_path"],
+                smiles=dataset_config["smiles"],
+                data_folders=[dataset_config["data_folders"][ds_idx]],
+                dataset_names=[ds_name],
+                crop_train_length=dataset_config["block_size"],
+                meta_info_name=dataset_config["meta_info_name"],
+                vq_vae_path=dataset_config["vq_vae_path"],
+                drug_emb_paths=dataset_config.get("drug_emb_paths", []),
+                drug_emb_dim=dataset_config.get("drug_emb_dim", 1024),
+                plate=dataset_config.get("plate", "unknown_plate"),
+                cell_line=dataset_config.get("cell_line", "unknown_cell_line"),
+                dose=dataset_config.get("dose", "dose_0.0"),
+            )
+        }
+
+    if skip_train:
+        val_only_datasets = {ds_name: ds_dict['val'] for ds_name, ds_dict in eval_datasets.items()}
+        return None, val_only_datasets
+
+    train_dataset = eval_datasets[dataset_config["dataset_names"][0]]['train']
     return train_dataset, eval_datasets

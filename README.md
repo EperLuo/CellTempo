@@ -219,12 +219,17 @@ All inference tasks are driven by a single entry point, [`src/generate_traj.py`]
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `trajectory_scbasetraj`   | Generate trajectories starting from the **scBaseTraj test set** (in-distribution benchmark).                                                            |
 | `trajectory_h5ad`         | Generate trajectories starting from any **user-provided `.h5ad`** snapshot.                                                                             |
-| `trajectory_perturb_h5ad` | Given a trajectory data, **perturb** one or more intermediate cells, and let the model continue — used to build counterfactual / landscape experiments. |
+| `trajectory_perturb_h5ad` | Given a trajectory data, **perturb** one or more intermediate cells (also support no perturbation at all), and let the model continue — used to build counterfactual / landscape experiments. |
 
 
 A minimal example (see [`scripts/generator_traj.sh`](scripts/generator_traj.sh)).
 
-For the `trajectory_perturb_h5ad` mode, you must first construct trajectories and specify which intermediate cell(s) to perturb.
+For the `trajectory_perturb_h5ad` mode, you must first construct trajectories and specify how many cells in each trajectory be send to the model. See example at: CellTempo/data/bone_marrow.pkl. The first item indicates the cell indexs of each traj, the second item indicates the length of each traj. Note: if `perturb_config` is not 'null', all cell in the input trajectory will be perturbed. 
+
+### Drug perturbation trajectory workflows
+
+[`scripts/generator_traj_drug_pert.sh`](scripts/generator_traj_drug_pert.sh) provides ready-to-edit examples for drug-perturbation analyses: a single-drug DEG trajectory workflow and a multi-drug workflow that generates one trajectory from the union of each drug's DEGs relative to DMSO. Before running, update the checkpoint, GPU, input-drug, and output paths for your environment; the script documents the required input format and key options.
+
 
 ## Evaluation
 

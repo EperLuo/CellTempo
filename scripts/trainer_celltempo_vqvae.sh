@@ -1,7 +1,8 @@
-alias proxy-on="export http_proxy=http://100.68.163.252:3128 https_proxy=http://100.68.163.252:3128 HTTP_PROXY=http://100.68.163.252:3128 HTTPS_PROXY=http://100.68.163.252:3128"
-alias proxy-off="unset http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY"
-proxy-on
-export WANDB_API_KEY="f14729fe2acf6d7450dc1603f8c31f84cb4a104e"
+# alias proxy-on="export http_proxy=http://100.68.163.252:3128 https_proxy=http://100.68.163.252:3128 HTTP_PROXY=http://100.68.163.252:3128 HTTPS_PROXY=http://100.68.163.252:3128"
+# alias proxy-off="unset http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY"
+# proxy-on
+: "${WANDB_API_KEY:?Please set WANDB_API_KEY in your environment before running this script}"
+export WANDB_API_KEY
 
 
 accelerate launch --main_process_port=8666 src/trainer_celltempo_vqvae.py \

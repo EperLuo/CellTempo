@@ -20,3 +20,4 @@ einx
 jax
 celltypist
 scib
+loguru

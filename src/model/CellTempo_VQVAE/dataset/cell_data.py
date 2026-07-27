@@ -1,14 +1,62 @@
 import numpy as np
 import random
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 from datasets import Dataset as ADataset
-from datasets import load_from_disk, concatenate_datasets, DatasetDict
+from datasets import load_from_disk, load_dataset, concatenate_datasets, DatasetDict
 
 import torch
 import os, glob
 import pandas as pd
+import pyarrow.parquet as pq
 from loguru import logger
 from tqdm import tqdm
+from pathlib import Path
+
+
+class ShardBatchSampler(Sampler):
+    """Yields batches where all indices come from the same parquet shard.
+
+    Within each epoch the shard order is shuffled, and within each shard
+    the row order is shuffled, but every batch is guaranteed to hit only
+    one underlying Arrow file → near-sequential I/O.
+    """
+
+    def __init__(self, shard_paths: list, batch_size: int, drop_last: bool = False):
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+
+        self.shard_ranges = []
+        offset = 0
+        for p in shard_paths:
+            n_rows = pq.read_metadata(p).num_rows
+            self.shard_ranges.append((offset, offset + n_rows))
+            offset += n_rows
+        self.total = offset
+
+    def __iter__(self):
+        order = list(range(len(self.shard_ranges)))
+        random.shuffle(order)
+
+        for si in order:
+            start, end = self.shard_ranges[si]
+            indices = list(range(start, end))
+            random.shuffle(indices)
+
+            for i in range(0, len(indices), self.batch_size):
+                batch = indices[i : i + self.batch_size]
+                if self.drop_last and len(batch) < self.batch_size:
+                    continue
+                yield batch
+
+    def __len__(self):
+        total_batches = 0
+        for start, end in self.shard_ranges:
+            n = end - start
+            if self.drop_last:
+                total_batches += n // self.batch_size
+            else:
+                total_batches += (n + self.batch_size - 1) // self.batch_size
+        return total_batches
 
 def load_and_concatenate_shards(parent_dir: str, expect_features=None):
     """Load shards and concatenate into a single Dataset (zero-copy merge)."""
@@ -160,3 +208,63 @@ class mixDataTypeTargetDataset_scbasecount(Dataset): # Accepts multiple HuggingF
         out_dict['exp'] = torch.tensor(expr_vec)
 
         return out_dict
+
+
+class Tahoe100m_vqvae(Dataset):
+    """Tahoe 100M dataset for VQ-VAE training/evaluation.
+
+    Loads all Tahoe parquet shards, maps integer token_ids to gene symbols
+    via gene_metadata.parquet, and aligns to the 18791 reference gene list.
+    """
+
+    def __init__(self, data_dir: str, mode: str = "train"):
+        base = Path(data_dir)
+        parquet_dir = base / "data"
+        self.shard_paths = sorted(glob.glob(str(parquet_dir / "train-*.parquet")))
+        if not self.shard_paths:
+            raise FileNotFoundError(f"No parquet shards under {parquet_dir}")
+
+        self.dataset = load_dataset(
+            "parquet", data_files=self.shard_paths, split="train",
+            cache_dir=str(base / "hf_cache"),
+        )
+
+        gene_meta = pd.read_parquet(base / "metadata" / "gene_metadata.parquet")
+        gene_vocab = dict(zip(gene_meta["token_id"], gene_meta["gene_symbol"]))
+
+        ref_tsv = Path(__file__).resolve().parents[3] / "utils" / "OS_scRNA_gene_index.18791.tsv"
+        reference_gene = pd.read_csv(str(ref_tsv), sep="\t")["gene_name"].values
+        self.n_genes = len(reference_gene)
+
+        ref_name2idx = {g: i for i, g in enumerate(reference_gene)}
+        max_token_id = max(gene_vocab.keys()) + 1
+        self._tid2ref = np.full(max_token_id, -1, dtype=np.int32)
+        for tid, sym in gene_vocab.items():
+            if sym in ref_name2idx:
+                self._tid2ref[tid] = ref_name2idx[sym]
+
+        if "LOCAL_RANK" not in os.environ or os.environ["LOCAL_RANK"] == "0":
+            logger.info(f"[Tahoe100m_vqvae] mode={mode}, "
+                        f"cells={len(self.dataset)}, genes={self.n_genes}")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        cell = self.dataset[idx]
+        gene_ids = np.asarray(cell["genes"])
+        expr_vals = np.asarray(cell["expressions"], dtype=np.float32)
+
+        if expr_vals[0] < 0:
+            gene_ids = gene_ids[1:]
+            expr_vals = expr_vals[1:]
+
+        expr_vec = np.zeros(self.n_genes, dtype=np.float32)
+        ref_positions = self._tid2ref[gene_ids]
+        valid = ref_positions >= 0
+        expr_vec[ref_positions[valid]] = expr_vals[valid]
+        return {"exp": torch.from_numpy(expr_vec)}
+
+
+def load_data_tahoe(*, data_dir: str, mode: str = "train"):
+    return Tahoe100m_vqvae(data_dir=data_dir, mode=mode)

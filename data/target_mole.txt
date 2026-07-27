@@ -1,0 +1,22 @@
+TTNPB	CC(=Cc1ccc(cc1)C(=O)O)c1ccc2c(c1)C(C)(C)CCC2(C)C
+SC79	O=C(OCC)C(C#N)C1C(C(OCC)=O)=C(N)OC2=CC=C(Cl)C=C12
+MHY1485	[O-][N+](=O)c1ccc(cc1)Nc1nc(nc(n1)N1CCOCC1)N1CCOCC1
+Purmorphamine	C1CCC(CC1)n1cnc2c1nc(nc2Nc1ccc(cc1)N1CCOCC1)Oc1cccc2c1cccc2
+XAV939	OC1=C(CSCC2)C2=NC(C3=CC=C(C(F)(F)F)C=C3)=N1
+LDN193189	N1(C2=CC=C(C3=CN4N=CC(C5=CC=NC6=C5C=CC=C6)=C4N=C3)C=C2)CCNCC1 / N1(C2=CC=C(C3=CN4N=CC(C5=CC=NC6=C5C=CC=C6)=C4N=C3)C=C2)CCNCC1.Cl.Cl
+Go6983	COc1ccc2c(c1)c(cn2CCCN(C)C)C1=C(C(=O)NC1=O)c1c[nH]c2c1cccc2
+MK2206	O=c1[nH]nc2n1ccc1c2cc(c(n1)c1ccc(cc1)C1(N)CCC1)c1ccccc1
+AZD3147	C[C@H]1COCCN1C2=NC(=NC(=C2)C3(CC3)S(=O)(=O)C4CC4)C5=CC=C(C=C5)NC(=S)NCCO
+AICAR	NC(=O)c1ncn([C@@H]2O[C@H](CO)[C@@H](O)[C@H]2O)c1N
+紫草素	C\C(C)=C\CC(O)C1=CC(=O)c2c(O)ccc(O)c2C1=O
+阿司匹林	CC(=O)Oc1ccccc1C(=O)O
+布洛芬	CC(C)Cc1ccc(cc1)[C@@H](C)C(=O)O
+咖啡因	Cn1c(=O)c2c(ncn2C)n(C)c1=O
+苯	c1ccccc1
+DMSO	CS(=O)C
+Ethanol	CCO
+Glycerol	OCC(O)CO
+Urea	NC(N)=O
+Acetamide	CC(N)=O
+Propylene glycol	CC(O)CO
+Ethylene glycol	OCCO

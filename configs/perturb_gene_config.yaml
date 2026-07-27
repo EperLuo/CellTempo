@@ -9,6 +9,9 @@
 #     add       - additive offset applied before scaling
 #     mul       - multiplicative scale factor
 
+# obs column name used to select cell types (default: clusters)
+cluster_key: clusters
+
 gene_modules:
   HSC_to_CLP:
     up:

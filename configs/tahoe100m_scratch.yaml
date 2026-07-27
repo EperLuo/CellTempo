@@ -8,13 +8,13 @@ eval_before_train: false
 # n_eval_cell: 100 # number of cells per eval batch
 save_ckpt_iter: 1000 # save a checkpoint every n iterations
 output_dir: "/data/lep/CellTempo_noempty/ckpt/model_ckpt"
-comment: "from_pretrain_Tahoe100m_dose_50ep_neweval_maskprefix_vqfinetuned"
+comment: "from_scratch_Tahoe100m_dose_50ep_neweval_maskprefix_vqfinetuned"
 
 always_save_checkpoint: True
-init_from: 'resume' #'scratch' #
+init_from: 'scratch' #'resume' #
 skip_optimizer_reload: true
-ckpt_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/celltempo_backbone_train_on_scbasetraj/checkpoint-10000
-# ckpt_path: null
+# ckpt_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/celltempo_backbone_train_on_scbasetraj/checkpoint-10000
+ckpt_path: null
 
 # DDP settings
 backend: 'nccl' # 'nccl', 'gloo', etc.
@@ -35,7 +35,6 @@ meta_info_name: mix_meta_info_vq_traj.json # mix_meta_info_expanded
 mapping_dict: /path/to/mapping_dict
 global_dataset: Tahoe100m
 vq_vae_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/vqvae_finetune_tahoe/checkpoint-200000/vqmodel
-# vq_vae_path: /data/lep/CellTempo_noempty/ckpt/model_ckpt/vqvae_train_on_scbasecount/checkpoint-700000/vqmodel
 
 # drug molecular representation (UniMol 310M, dim=1024)
 drug_emb_paths:
@@ -59,7 +58,7 @@ cell_pos_num: 21
 
 
 # adamw optimizer
-learning_rate: 5.0e-5 #1.0e-4 #  6.0e-4; max learning rate, 6.0 not 6 
+learning_rate: 1.0e-4 #1.0e-4 #  6.0e-4; max learning rate, 6.0 not 6 
 max_iters: 50000 # total number of training iterations'
 max_epochs: 50
 weight_decay: 1.0e-1

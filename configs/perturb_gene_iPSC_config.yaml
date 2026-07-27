@@ -1,0 +1,96 @@
+# Perturbation gene configuration for h5ad_traj_vq dataset.
+#
+# gene_modules: named groups of up/down-regulated gene lists.
+# amplify_rules: ordered list of amplification operations applied at dataset init.
+#   Each rule specifies:
+#     cluster   - obs['clusters'] value to select cells
+#     module    - key in gene_modules
+#     direction - "up" or "down"
+#     add       - additive offset applied before scaling
+#     mul       - multiplicative scale factor
+
+# obs column name used to select cell types (default: clusters)
+cluster_key: cell_type_reconstructed
+
+gene_modules:
+  GPC_to_OPC:
+    up:
+      - OLIG1
+      - PTN
+      - ETV1
+      - DLL3
+      - C2orf27A
+      - LIMA1
+      - SCRG1
+      - SMOC1
+      - PTPRZ1
+      - SIRT2
+
+      # - OLIG1
+      - OLIG2
+      # - PTN
+      # - ETV1
+      - PDGFRA
+
+
+      # - MYC
+      # - OLIG1
+      # - ZBTB18
+      # - ZFPM2
+      # - PAWR
+      # - PAX1
+      # - ASCL1
+      # - TCF12
+      # - HDAC9
+      # - GLI2
+
+    down: []
+      # - SPON1
+      # - SULF1
+      # - RND3
+      # - C8orf34
+      # - LRP2
+      # - LIMCH1
+      # - ZNF503
+      # - MAP6
+      # - IQGAP2
+      # - HOXB5
+
+      # - YAP1
+      # - WWTR1 
+      # - DOT1L
+      # - HES1
+      # - ADCY2
+
+
+
+
+
+# Amplification rules applied sequentially during dataset initialisation.
+# Cells are selected by obs['clusters'] == cluster.
+amplify_rules:
+  - cluster: GPC_prolif
+    module: GPC_to_OPC
+    direction: up
+    add: 5
+    mul: 6
+  - cluster: NPC_GPC
+    module: GPC_to_OPC
+    direction: up
+    add: 5
+    mul: 6
+  - cluster: Neuron
+    module: GPC_to_OPC
+    direction: up
+    add: 5
+    mul: 6
+  - cluster: Astrocyte_precursor
+    module: GPC_to_OPC
+    direction: up
+    add: 5
+    mul: 6
+  # - cluster: GPC_prolif
+  #   module: GPC_to_OPC
+  #   direction: down
+  #   add: 1
+  #   mul: 0

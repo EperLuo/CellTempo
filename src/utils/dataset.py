@@ -144,58 +144,171 @@ def collate_fn_train_traj_vq(batch):
 
 def collate_fn_infer_traj_vq(batch):
     """
-    Since all samples within a batch have the same length, no padding is needed.
-    Fields can be stacked directly.
+    Collate function that supports different target_id values within a batch.
+    Uses left-padding so that the rightmost (most recent) tokens are aligned,
+    which is required for correct autoregressive generation with KV cache.
     """
-    if 'target_id' in batch[0].keys():
-        prefix_num = batch[0]['target_id']
-    else:
-        prefix_num = 1
-    
     if not batch:
         return None
+
     c2_start_values = [item['c2_start'] for item in batch]
     unique_c2_start = set(c2_start_values)
-    if len(unique_c2_start) != 1:
-        print(f"Different c2_start values in batch: {unique_c2_start}")
     assert len(unique_c2_start) == 1, f"Batch samples have different c2_start values: {unique_c2_start}"
-    
-    # ensure all sliced lengths are consistent
-    slice_lengths = [item['c2_start'] for item in batch]
-    assert len(set(slice_lengths)) == 1, "Slice lengths are not consistent."
-    
-    # c2_start is one cell's length; +2 for the cell_id token and <S> token
-    input_ids = torch.stack([torch.tensor(item['tokens'][:item['c2_start']*prefix_num+2]) for item in batch], dim=0) 
-    # x_expr = torch.stack([torch.tensor(item['values'][:item['c2_start']]) for item in batch], dim=0)
+
+    c2_start_val = c2_start_values[0]
+
+    # Each sample truncated by its OWN target_id
+    token_lists = []
+    cell_pos_lists = []
+    target_ids = []
+    for item in batch:
+        tid = item.get('target_id', 1)
+        target_ids.append(tid)
+        length = c2_start_val * tid + 2
+        token_lists.append(torch.tensor(item['tokens'][:length]))
+        cell_pos_lists.append(torch.tensor(item['cell_pos'][:length]))
+
+    max_len = max(t.size(0) for t in token_lists)
+
+    # Left-pad to max_len
+    padded_tokens = []
+    padded_cell_pos = []
+    attention_masks = []
+    pad_lens = []
+    for tokens, pos in zip(token_lists, cell_pos_lists):
+        pad_len = max_len - tokens.size(0)
+        pad_lens.append(pad_len)
+        if pad_len > 0:
+            padded_tokens.append(torch.cat([torch.zeros(pad_len, dtype=tokens.dtype), tokens]))
+            padded_cell_pos.append(torch.cat([torch.zeros(pad_len, dtype=pos.dtype), pos]))
+            attention_masks.append(torch.cat([
+                torch.zeros(pad_len, dtype=torch.bool),
+                torch.ones(tokens.size(0), dtype=torch.bool),
+            ]))
+        else:
+            padded_tokens.append(tokens)
+            padded_cell_pos.append(pos)
+            attention_masks.append(torch.ones(tokens.size(0), dtype=torch.bool))
+
+    input_ids = torch.stack(padded_tokens)
+    cell_pos = torch.stack(padded_cell_pos)
+    attention_mask = torch.stack(attention_masks)
+
     c1_len = torch.tensor([item['c1_len'] for item in batch], dtype=torch.long)
-    c2_start = torch.tensor([item['c2_start'] for item in batch], dtype=torch.long)
-
-    cell_pos = torch.stack([torch.tensor(item['cell_pos'][:item['c2_start']*prefix_num+2]) for item in batch], dim=0)
-
+    c2_start = torch.tensor(c2_start_values, dtype=torch.long)
     idx = [item['idx'] for item in batch]
-    
+
     token_labels = pad_sequence([
-        torch.tensor(item['tokens'][item['c2_start']*prefix_num+2:]) for item in batch
+        torch.tensor(item['tokens'][c2_start_val * item.get('target_id', 1) + 2:])
+        for item in batch
     ], batch_first=True, padding_value=-100)
-    
-    # expr_labels = pad_sequence([
-    #     torch.tensor(item['values'][item['c2_start']:]) for item in batch
-    # ], batch_first=True, padding_value=-100)
-    
-    # build attention_mask using the same logic as train_target
-    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)  # no padding — all True
 
     return {
         'input_ids': input_ids,
-        # 'x_expr': x_expr,
         'c1_len': c1_len,
         'c2_start': c2_start,
         'cell_pos': cell_pos,
         'attention_mask': attention_mask,
         'token_labels': token_labels,
-        # 'expr_labels': expr_labels,
+        'idx': idx,
+        'pad_lens': torch.tensor(pad_lens, dtype=torch.long),
+    }
+
+
+def collate_fn_train_target_vq_perturb(batch):
+
+    # 分别提取tokens和values
+    tokens = [item['tokens'] for item in batch]
+    # values = [item['values'] for item in batch]
+    cell_pos_list = [item['cell_pos'] for item in batch]
+
+
+    data_len = torch.tensor([item['trunc_full_len'] for item in batch])
+    c1_len = torch.tensor([item['c1_len'] for item in batch])
+    c2_start = torch.tensor([item['c2_start'] for item in batch])
+    
+    # 生成标签，这里简单地将序列向左移动一位
+    y_t = [torch.cat([torch.tensor(t[1:]), torch.tensor([-100])]) for t in tokens]
+
+    # 填充或截断
+    end_token = tokens[0][-1]
+    tokens_padded = pad_sequence([torch.tensor(t) for t in tokens], batch_first=True, padding_value=end_token)
+    y_t_padded = pad_sequence(y_t, batch_first=True, padding_value=-100)
+    # y_v_padded = pad_sequence(y_v, batch_first=True, padding_value=0)
+
+    # padding值设为2
+    cell_pos = pad_sequence([torch.tensor(c) for c in cell_pos_list], batch_first=True, padding_value=0)
+
+    # stack precomputed drug embeddings if available
+    if 'drug_emb' in batch[0]:
+        drug_emb = torch.stack([item['drug_emb'] for item in batch])  # (B, drug_emb_dim)
+    else:
+        drug_emb = None
+
+    return {
+        'input_ids': tokens_padded,
+        'labels': y_t_padded,
+        'xlen': data_len,
+        'c1_len': c1_len,
+        'c2_start': c2_start,
+        'cell_pos': cell_pos,
+        'drug_emb': drug_emb,
+    }
+
+
+
+def collate_fn_infer_perturb_vq(batch):
+    """
+    Collate function for perturb inference.
+    Truncates each sample to the prefix (up to 'perturb' + '<S>'),
+    keeping the rest as ground-truth labels.
+    Perturb sequence: [plate, cell_line, drug, dose, control, <S>, ...vq_codes..., <E>, perturb, <S>, ...]
+    prefix_len = 4 (meta) + c1_len (control+<S>+codes+<E>) + 2 (perturb+<S>)
+    """
+    if not batch:
+        return None
+
+    META_TOKENS = 4  # plate, cell_line, drug, dose
+
+    prefix_lens = []
+    for item in batch:
+        # c1_len = 1(<S>) + N(vq codes) + 1(<E>) + 1(control) = N+3
+        # prefix = 3(meta) + c1_len + 2(perturb + <S>)
+        plen = META_TOKENS + item['c1_len'] + 2
+        prefix_lens.append(plen)
+
+    # all samples should have the same prefix length
+    assert len(set(prefix_lens)) == 1, f"Inconsistent prefix lengths: {set(prefix_lens)}"
+    prefix_len = prefix_lens[0]
+
+    input_ids = torch.stack([torch.tensor(item['tokens'][:prefix_len]) for item in batch])
+    cell_pos = torch.stack([torch.tensor(item['cell_pos'][:prefix_len]) for item in batch])
+    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+    c1_len = torch.tensor([item['c1_len'] for item in batch], dtype=torch.long)
+    c2_start = torch.tensor([item['c2_start'] for item in batch], dtype=torch.long)
+    idx = [item['idx'] for item in batch]
+
+    token_labels = pad_sequence([
+        torch.tensor(item['tokens'][prefix_len:]) for item in batch
+    ], batch_first=True, padding_value=-100)
+
+    if 'drug_emb' in batch[0]:
+        drug_emb = torch.stack([item['drug_emb'] for item in batch])
+    else:
+        drug_emb = None
+
+    return {
+        'input_ids': input_ids,
+        'c1_len': c1_len,
+        'c2_start': c2_start,
+        'cell_pos': cell_pos,
+        'attention_mask': attention_mask,
+        'token_labels': token_labels,
+        'drug_emb': drug_emb,
         'idx': idx,
     }
+
 
 def load_and_concatenate_shards(parent_dir: str, expect_features=None):
     """Load shards and concatenate into a single Dataset (zero-copy merge)."""
@@ -397,9 +510,9 @@ class h5ad_data_vq(Dataset): # Accepts multiple HuggingFace datasets
         self.global_dataset = sc.read_h5ad(os.path.join(data_folders[velo_data_indx],dataset_names[velo_data_indx]))
         self.global_dataset.var_names = self.global_dataset.var_names.str.upper()
         self.global_dataset = self.global_dataset[:, ~self.global_dataset.var_names.duplicated()].copy()
-        with open(os.path.join(data_folders[velo_data_indx], mapping_dict), 'r') as f:
-            self.cell_name_to_num = json.load(f)
-            self.all_cell_name = self.cell_name_to_num.keys()
+        # with open(os.path.join(data_folders[velo_data_indx], mapping_dict), 'r') as f:
+        #     self.cell_name_to_num = json.load(f)
+        #     self.all_cell_name = self.cell_name_to_num.keys()
 
         with open(os.path.join(data_folders[0], meta_info_name), 'r') as f:
             self.meta_info = json.load(f)
@@ -515,7 +628,9 @@ class Tahoe100m_vq(Dataset): # Accepts multiple HuggingFace datasets
                  mode: str = 'train',
                  global_dataset: str = 'velo_dataset_all', # only needed for velocity; used to find next cell globally
                  dataset: ADataset = None,
-                 vq_vae_path: str = '/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel'
+                 vq_vae_path: str = '/hpc-cache-pfs/home/bianhaiyang/veloMulan/outputHub/vqvae_ckpt/cvqvae_scbasecount_fixed_recon1e4/checkpoint-200000/vqmodel',
+                 drug_emb_paths: list = [],
+                 repeat_per_pair: int = 1,
                 ):
 
         with open(os.path.join(data_folders[0], meta_info_name), 'r') as f:
@@ -534,13 +649,22 @@ class Tahoe100m_vq(Dataset): # Accepts multiple HuggingFace datasets
             logger.info(f'vocab size is {self.vocab_size}')
             logger.info(f'cropped data_block_size  is {crop_train_length}')
         
-        self.reference_gene = pd.read_csv('OS_scRNA_gene_index.18791.tsv',sep='\t')['gene_name'].values
+        self.reference_gene = pd.read_csv(str(BASE_DIR / 'OS_scRNA_gene_index.18791.tsv'), sep='\t')['gene_name'].values
         local_rank = int(os.environ.get("LOCAL_RANK", 0))  # GPU index of the current process
         device = torch.device(f"cuda:{local_rank}")
         print('current device: ', device)
         self.vq_model = VQModel.from_pretrained(vq_vae_path,cvq_distance = 'cos',cvq_anchor='probrandom')#.to(device=device)
 
-        pairs_path = os.path.join(data_folders[0],f'pairs_{mode}.json.gz')
+        # load precomputed drug molecular embeddings (UniMol)
+        self.drug_emb_cache = {}
+        for emb_path in drug_emb_paths:
+            emb_dict = torch.load(emb_path, map_location='cpu')
+            for smiles, emb in emb_dict.items():
+                self.drug_emb_cache[smiles] = torch.tensor(emb, dtype=torch.float32) if not isinstance(emb, torch.Tensor) else emb.float()
+        if self.drug_emb_cache and ('LOCAL_RANK' not in os.environ or os.environ['LOCAL_RANK'] == '0'):
+            logger.info(f'Loaded {len(self.drug_emb_cache)} drug embeddings, dim={next(iter(self.drug_emb_cache.values())).shape[0]}')
+
+        pairs_path = os.path.join(data_folders[0],dataset_names[0],f'pairs_{mode}.json.gz')
         with gzip.open(pairs_path, "rt", encoding="utf-8") as f:
             obj = json.load(f)
         self.pairs = {}
@@ -552,29 +676,50 @@ class Tahoe100m_vq(Dataset): # Accepts multiple HuggingFace datasets
             }
         self.perturb_key = list(self.pairs.keys())
 
-        gene_metadata = load_dataset("vevotx/Tahoe-100M", name="gene_metadata", split="train")
+        gene_metadata_path = os.path.join(data_folders[0], dataset_names[0], "metadata", "gene_metadata.parquet")
+        gene_metadata_df = pd.read_parquet(gene_metadata_path)
         self.gene_vocab = {}
-        for entry in gene_metadata:
-            self.gene_vocab[entry["token_id"]]= entry["gene_symbol"]
+        for _, entry in gene_metadata_df.iterrows():
+            self.gene_vocab[entry["token_id"]] = entry["gene_symbol"]
         sorted_vocab_items = sorted(self.gene_vocab.items())
         token_ids, gene_names = zip(*sorted_vocab_items)
         self.token_id_to_col_idx = {token_id: idx for idx, token_id in enumerate(token_ids)}
 
-            
+        # build sample -> dose token mapping
+        import ast
+        sample_metadata_path = os.path.join(data_folders[0], dataset_names[0], "metadata", "sample_metadata.parquet")
+        sample_df = pd.read_parquet(sample_metadata_path)
+        self.dose = {}
+        for _, row in sample_df.iterrows():
+            try:
+                parsed = ast.literal_eval(str(row['drugname_drugconc']))
+                dose_val = parsed[0][1]
+            except Exception:
+                dose_val = 0.0
+            self.dose[row['sample']] = f"dose_{dose_val}"
+
+        self.repeat_per_pair = repeat_per_pair
+
     def __len__(self):            
-        return len(self.pairs)
+        return len(self.pairs) * self.repeat_per_pair
         
     def __getitem__(self, idx_num):
+        pair_idx = idx_num // self.repeat_per_pair
+        repeat_idx = idx_num % self.repeat_per_pair
 
-        pair = self.pairs[self.perturb_key[idx_num]]
+        pair = self.pairs[self.perturb_key[pair_idx]]
         pert_id = random.choice(pair['pert_ids'])
-        ctrl_id = random.choice(pair['ctrl_ids'])
+        ctrl_id = pair['ctrl_ids'][repeat_idx % len(pair['ctrl_ids'])]
         traj = [ctrl_id, pert_id]
         
         processed_cell = self.extract_gene_and_expr(traj,)
         paired_cell = self.concat_and_trunc_cell(processed_cell, trunc = self.crop_train_length) # if autoregressive
-        paired_cell['idx'] = idx_num
+        paired_cell['idx'] = pair_idx
 
+        smiles = processed_cell['smile']
+        if self.drug_emb_cache and smiles in self.drug_emb_cache:
+            paired_cell['drug_emb'] = self.drug_emb_cache[smiles]
+        
         return paired_cell
     
     def get_next_cell_velo(self, idx_num, global_dataset):
@@ -586,6 +731,7 @@ class Tahoe100m_vq(Dataset): # Accepts multiple HuggingFace datasets
         smiles=cell_data['canonical_smiles']
         plate=cell_data['plate']
         cell_line_id=cell_data['cell_line_id']
+        dose=self.dose.get(cell_data['sample'], 'dose_0.0')
 
         if expr_values[0] < 0: 
             gene_names = gene_names[1:]
@@ -593,16 +739,14 @@ class Tahoe100m_vq(Dataset): # Accepts multiple HuggingFace datasets
         
         gene_names = [self.gene_vocab[gene] for gene in gene_names]
 
-        return gene_names, expr_values, drug, smiles, plate, cell_line_id
+        return gene_names, expr_values, drug, smiles, plate, cell_line_id, dose
   
     def extract_gene_and_expr(self, idx_num):
         expr_values = [] 
 
         for next_cell_name in idx_num:
-            gene_names_next_cell, expr_values_next_cell, drug, smiles, plate, cell_line_id = self.get_next_cell_velo(next_cell_name, self.global_dataset)
-            # expr_values_next_cell = [expr for gene, expr in zip(gene_names_next_cell, expr_values_next_cell) if gene in self.token_id_to_col_idx]
+            gene_names_next_cell, expr_values_next_cell, drug, smiles, plate, cell_line_id, dose = self.get_next_cell_velo(next_cell_name, self.global_dataset)
             expr_values_next_cell = torch.tensor(pd.Series(expr_values_next_cell, index=gene_names_next_cell).reindex(self.reference_gene, fill_value=0).values, dtype=torch.float32)
-            # gene_names.append(gene_names_next_cell)
             expr_values.append(expr_values_next_cell)
         instruction = None
 
@@ -617,6 +761,7 @@ class Tahoe100m_vq(Dataset): # Accepts multiple HuggingFace datasets
             'smile':smiles,
             'plate':plate,
             'cell_line':cell_line_id,
+            'dose': dose,
         }
 
         return processed_cell
@@ -629,10 +774,10 @@ class Tahoe100m_vq(Dataset): # Accepts multiple HuggingFace datasets
         instruction = processed_cell['smile']
         end_tokens = ['<E>']
         token_cell = processed_cell['values'].astype(str) #[str(index) for index in processed_cell['values']]
+        dose = processed_cell['dose']
 
-
-        tokens = [processed_cell['plate'].astype(str),processed_cell['cell_line'].astype(str),'drug']
-        cell_pos = [1,1,1]
+        tokens = [str(processed_cell['plate']), str(processed_cell['cell_line']), 'drug', dose]
+        cell_pos = [1,1,1,1]
         # for i, token in enumerate(token_cell):
         tokens += ["control"] + start_tokens + list(token_cell[0]) + end_tokens
         cell_pos += [1]
@@ -678,9 +823,9 @@ class h5ad_traj_vq(Dataset): # Accepts multiple HuggingFace datasets
         self.global_dataset = sc.read_h5ad(os.path.join(data_folders[velo_data_indx],dataset_names[velo_data_indx]))
         self.global_dataset.var_names = self.global_dataset.var_names.str.upper()
         self.global_dataset = self.global_dataset[:, ~self.global_dataset.var_names.duplicated()].copy()
-        with open(os.path.join(data_folders[velo_data_indx], mapping_dict), 'r') as f:
-            self.cell_name_to_num = json.load(f)
-            self.all_cell_name = self.cell_name_to_num.keys()
+        # with open(os.path.join(data_folders[velo_data_indx], mapping_dict), 'r') as f:
+        #     self.cell_name_to_num = json.load(f)
+        #     self.all_cell_name = self.cell_name_to_num.keys()
 
         with open(os.path.join(data_folders[0], meta_info_name), 'r') as f:
             self.meta_info = json.load(f)
@@ -710,6 +855,7 @@ class h5ad_traj_vq(Dataset): # Accepts multiple HuggingFace datasets
                 _pcfg = _yaml.safe_load(_f)
             _gene_modules = _pcfg.get('gene_modules', {})
             _amplify_rules = _pcfg.get('amplify_rules', [])
+            _cluster_key = _pcfg.get('cluster_key', 'clusters')
 
             self.global_dataset.X = (
                 self.global_dataset.X.toarray()
@@ -722,11 +868,17 @@ class h5ad_traj_vq(Dataset): # Accepts multiple HuggingFace datasets
                 gene_list = _gene_modules[rule['module']][direction]
                 add       = rule.get('add', 1.0)
                 mul       = rule.get('mul', 1.0)
-                mask = self.global_dataset.obs['clusters'] == cluster
+                mask = self.global_dataset.obs[_cluster_key] == cluster
                 self.global_dataset[mask].X = self.amplify_genes(
                     self.global_dataset[mask], gene_list, add=add, mul=mul
                 )
             self.global_dataset = self.global_dataset.X
+        else:
+            self.global_dataset = (
+                self.global_dataset.X.toarray()
+                if sp.issparse(self.global_dataset.X)
+                else self.global_dataset.X
+            )
 
         if trajectory_pkl is None:
             raise ValueError(
@@ -770,7 +922,7 @@ class h5ad_traj_vq(Dataset): # Accepts multiple HuggingFace datasets
 
         return processed_cell
     
-    def concat_and_trunc_cell(self, processed_cell, data_type, trunc = True):
+    def concat_and_trunc_cell(self, processed_cell, trunc = True):
         
         start_tokens = ['<S>']
 
@@ -813,7 +965,7 @@ class h5ad_traj_vq(Dataset): # Accepts multiple HuggingFace datasets
         idx = [gene_to_idx[g] for g in gene_list if g in gene_to_idx]
         if not idx:
             print("⚠️ No matching genes found!")
-            return adata
+            return adata.X
 
         X = adata.X
 
@@ -830,3 +982,163 @@ class h5ad_traj_vq(Dataset): # Accepts multiple HuggingFace datasets
             adata.X[:, idx] = (adata.X[:, idx] + add) * mul
 
         return adata.X
+
+
+class H5adPerturb_vq(Dataset):
+    """Dataset for h5ad + single SMILES perturbation inference.
+
+    Reads all cells from an h5ad file, pairs each cell with a given drug
+    SMILES, and produces the same token format as Tahoe100m_vq so that the
+    model generates perturbed cells.
+
+    Drug embedding lookup order:
+      1. Pre-computed cache from drug_emb_paths (same .pt format as Tahoe100m)
+      2. On-the-fly computation via unimol_tools UniMolRepr (310M model)
+    """
+
+    def __init__(
+        self,
+        h5ad_path: str,
+        smiles: str,
+        data_folders: list = ['path1'],
+        dataset_names: list = ['name1'],
+        crop_train_length: int = 286,
+        meta_info_name: str = 'mix_meta_info_vq_traj.json',
+        vq_vae_path: str = '',
+        drug_emb_paths: list = [],
+        drug_emb_dim: int = 1024,
+        plate: str = 'unknown_plate',
+        cell_line: str = 'unknown_cell_line',
+        dose: str = 'dose_0.0',
+    ):
+        with open(os.path.join(data_folders[0], meta_info_name), 'r') as f:
+            self.meta_info = json.load(f)
+
+        self.__chars = self.meta_info['token_set']
+        self.vocab_size = len(self.__chars)
+        self.tokenizer = mixMulanTokenizer(self.__chars)
+        self.crop_train_length = crop_train_length
+        self.smiles = smiles
+        self.plate = plate
+        self.cell_line = cell_line
+        self.dose = dose
+
+        if 'LOCAL_RANK' not in os.environ or os.environ['LOCAL_RANK'] == '0':
+            logger.info(f'[H5adPerturb_vq] Loading h5ad from {h5ad_path}')
+
+        self.reference_gene = pd.read_csv(
+            str(BASE_DIR / 'OS_scRNA_gene_index.18791.tsv'), sep='\t'
+        )['gene_name'].values
+
+        self.vq_model = VQModel.from_pretrained(
+            vq_vae_path, cvq_distance='cos', cvq_anchor='probrandom'
+        )
+
+        adata = sc.read_h5ad(h5ad_path)
+        adata.var_names = adata.var_names.str.upper()
+        adata = adata[:, ~adata.var_names.duplicated()].copy()
+        adata = map_adata_to_reference_genes(adata, self.reference_gene)
+        self.expr_matrix = (
+            adata.X.toarray() if sp.issparse(adata.X) else adata.X
+        )
+        self.obs = adata.obs
+
+        if 'LOCAL_RANK' not in os.environ or os.environ['LOCAL_RANK'] == '0':
+            logger.info(f'[H5adPerturb_vq] Loaded {self.expr_matrix.shape[0]} cells')
+
+        # resolve drug embedding
+        self.drug_emb = self._resolve_drug_emb(
+            smiles, drug_emb_paths, drug_emb_dim
+        )
+
+    def _resolve_drug_emb(self, smiles, drug_emb_paths, drug_emb_dim):
+        """Look up embedding from cache; fall back to UniMolRepr computation."""
+        for emb_path in drug_emb_paths:
+            if not os.path.exists(emb_path):
+                continue
+            emb_dict = torch.load(emb_path, map_location='cpu')
+            if smiles in emb_dict:
+                emb = emb_dict[smiles]
+                emb = torch.tensor(emb, dtype=torch.float32) if not isinstance(emb, torch.Tensor) else emb.float()
+                logger.info(f'[H5adPerturb_vq] Found drug embedding in cache: {emb_path}')
+                return emb
+
+        logger.info(f'[H5adPerturb_vq] Drug embedding not found in cache, computing with UniMolRepr (310M)...')
+        try:
+            from unimol_tools import UniMolRepr
+        except ImportError:
+            raise ImportError(
+                'unimol_tools is not installed. Install via: pip install unimol_tools huggingface_hub'
+            )
+
+        repr_model = UniMolRepr(
+            data_type='molecule',
+            remove_hs=False,
+            model_name='unimolv2',
+            model_size='310m',
+            batch_size=1,
+            use_cuda=torch.cuda.is_available(),
+        )
+        repr_output = repr_model.get_repr([smiles], return_atomic_reprs=False, return_tensor=True)
+        emb = repr_output[0].float()
+        assert emb.shape[0] == drug_emb_dim, (
+            f'Expected drug_emb_dim={drug_emb_dim}, got {emb.shape[0]}'
+        )
+        logger.info(f'[H5adPerturb_vq] Computed embedding dim={emb.shape[0]} for SMILES: {smiles}')
+        return emb
+
+    def __len__(self):
+        return self.expr_matrix.shape[0]
+
+    def __getitem__(self, idx_num):
+        expr_vec = torch.tensor(
+            self.expr_matrix[idx_num], dtype=torch.float32
+        ).unsqueeze(0)
+
+        latent = self.vq_model.encode(expr_vec).latents
+        _, _, (_, _, encoding_indices) = self.vq_model.quantize(latent)
+        vq_codes = encoding_indices.reshape(1, -1).cpu().numpy()
+
+        processed_cell = {
+            'values': vq_codes,
+            'smile': self.smiles,
+            'plate': self.plate,
+            'cell_line': self.cell_line,
+            'dose': self.dose,
+        }
+        paired_cell = self._concat_and_trunc_cell(processed_cell)
+        paired_cell['idx'] = idx_num
+        paired_cell['drug_emb'] = self.drug_emb
+
+        return paired_cell
+
+    def _concat_and_trunc_cell(self, processed_cell):
+        """Build token sequence: [plate, cell_line, drug, dose, control, <S>, ...codes..., <E>, perturb, <S>]"""
+        start_tokens = ['<S>']
+        end_tokens = ['<E>']
+        token_cell = processed_cell['values'].astype(str)
+
+        tokens = [str(processed_cell['plate']), str(processed_cell['cell_line']), 'drug', str(processed_cell['dose'])]
+        cell_pos = [1, 1, 1, 1]
+
+        tokens += ["control"] + start_tokens + list(token_cell[0]) + end_tokens
+        cell_pos += [1]
+        cell_pos += [2] * (len(start_tokens) + token_cell[0].shape[0] + len(end_tokens))
+
+        tokens += ["perturb"] + start_tokens + list(token_cell[0]) + end_tokens
+        cell_pos += [1]
+        cell_pos += [3] * (len(start_tokens) + token_cell[0].shape[0] + len(end_tokens))
+
+        c1_len = len(start_tokens) + token_cell[0].shape[0] + len(end_tokens) + 1
+
+        token_ids = self.tokenizer.encode(tokens)
+        full_length = len(token_ids)
+
+        return {
+            'tokens': token_ids,
+            'c1_len': c1_len,
+            'c2_start': c1_len,
+            'trunc_full_len': full_length,
+            'cell_pos': cell_pos,
+            'instructions': self.smiles,
+        }

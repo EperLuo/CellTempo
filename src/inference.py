@@ -10,15 +10,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 def move_to_device(batch_data, device):
     """Move a batch of data to the specified GPU device."""
     input_ids = batch_data['input_ids'].to(device)
-    # x_expr = batch_data['x_expr'].to(device)
     cell_pos = batch_data['cell_pos'].to(device)
-    return input_ids, cell_pos
+    attention_mask = batch_data['attention_mask'].to(device) if 'attention_mask' in batch_data else None
+    drug_emb = batch_data['drug_emb'].to(device) if batch_data.get('drug_emb') is not None else None
+    return input_ids, cell_pos, attention_mask, drug_emb
 
 
 def infer_on_device(batch_data, model, device, max_new_tokens=200):
     """Run inference on the specified GPU."""
     try:
-        input_ids, cell_pos = move_to_device(batch_data, device)
+        input_ids, cell_pos, attention_mask, drug_emb = move_to_device(batch_data, device)
 
         with open(str(BASE_DIR / 'data/mix_meta_info_vq_traj.json'), 'r') as f:
             meta_info = json.load(f)
@@ -36,16 +37,22 @@ def infer_on_device(batch_data, model, device, max_new_tokens=200):
             top_k=1,
             use_cache=True,
             debug=False,
+            attention_mask=attention_mask,
+            drug_emb=drug_emb,
         )
         
+        # per-sample left-padding lengths (0 if no padding was applied)
+        pad_lens = batch_data.get('pad_lens', torch.zeros(len(batch_data['input_ids']), dtype=torch.long))
+
         # store inference results for each sample as a dict
         results = []
         for i in range(len(batch_data['input_ids'])):
+            pl = pad_lens[i].item()
             result = {
-                'generated_ids': generated_input_ids[i].cpu().tolist(),  # move to CPU
-                'entropy': generated_x_expr[i].cpu().tolist(),    # move to CPU
-                'token_labels': batch_data['token_labels'][i].cpu().tolist(),  # move to CPU
-                'expr_labels': batch_data['input_ids'][i].cpu().tolist(),    # move to CPU
+                'generated_ids': generated_input_ids[i, pl:].cpu().tolist(),
+                'entropy': generated_x_expr[i].cpu().tolist(),
+                'token_labels': batch_data['token_labels'][i].cpu().tolist(),
+                'expr_labels': batch_data['input_ids'][i, pl:].cpu().tolist(),
                 'idx': batch_data['idx'][i],
             }
             results.append(result)
@@ -98,6 +105,13 @@ def process_batch_on_device(gpu_data):
 def parallel_infer(model, data_list, num_gpus, batch_size_per_gpu, savepath, save_name, max_new_tokens=300):
     """Run parallel inference across multiple GPUs and save the results."""
     devices = [torch.device(f'cuda:{i}') for i in range(num_gpus)]  # get all GPU devices
+    
+    # clean up stale result files from previous runs with more GPUs
+    import glob
+    existing = glob.glob(os.path.join(savepath, f"gpu_*_results_{save_name}.pt"))
+    for f in existing:
+        os.remove(f)
+        print(f"Removed stale result file: {f}")
     
     # split the batch list into N parts, one per GPU
     data_splits = [data_list[i:i + batch_size_per_gpu] for i in range(0, len(data_list), batch_size_per_gpu)]

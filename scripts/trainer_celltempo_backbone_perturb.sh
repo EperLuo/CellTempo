@@ -11,12 +11,13 @@ export WANDB_API_KEY
 
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_SHOW_CPP_STACKTRACES=1
+export CUDA_VISIBLE_DEVICES=0,1
 
 torchrun \
-    --nproc_per_node $MLP_WORKER_GPU \
-    --master_addr $MLP_WORKER_0_HOST \
-    --node_rank $MLP_ROLE_INDEX \
-    --master_port 20000 \
-    --nnodes $MLP_WORKER_NUM \
+    --nproc_per_node ${MLP_WORKER_GPU:-2} \
+    --master_addr ${MLP_WORKER_0_HOST:-127.0.0.1} \
+    --node_rank ${MLP_ROLE_INDEX:-0} \
+    --master_port 20002 \
+    --nnodes ${MLP_WORKER_NUM:-1} \
     src/trainer_celltempo_backbone.py \
-    --config_file "/hpc-cache-pfs/home/bianhaiyang/veloMulan/codeHub/CellTempo/configs/celltempo_scbasetraj_pretrain.yaml"
+    --config_file "/data/lep/CellTempo_noempty/CellTempo/configs/tahoe100m_finetune.yaml"

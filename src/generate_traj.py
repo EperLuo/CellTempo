@@ -19,8 +19,9 @@ from torch.utils.data import DataLoader
 import torch
 from inference import parallel_infer
 from utils.train_utils import initialize_datasets_from_config, initialize_datasets_from_config_h5ad, \
-    initialize_datasets_from_config_perturb, initialize_datasets_from_config_h5ad_traj
-from utils.dataset import collate_fn_infer_traj_vq
+    initialize_datasets_from_config_perturb, initialize_datasets_from_config_h5ad_traj, \
+    initialize_datasets_from_config_perturb_h5ad, get_dataset_config_from_yaml
+from utils.dataset import collate_fn_infer_traj_vq, collate_fn_infer_perturb_vq
 from model.CellTempo_backbone import CellTempoConfig, CellTempo_backbone
 import multiprocessing
 
@@ -63,7 +64,8 @@ def get_model_config_from_yaml(yaml_config, vocab_size):
         vq_vae_path=yaml_config["vq_vae_path"],
         data_folders=yaml_config["data_folders"], 
         meta_info_name=yaml_config["meta_info_name"],
-        use_flash=yaml_config["use_flash"]
+        use_flash=yaml_config.get("use_flash", False),
+        drug_emb_dim=yaml_config.get("drug_emb_dim", 0),
     )
 
 def subset_dataset_by_prefix(dataset_val, prefix):
@@ -96,10 +98,11 @@ def process_dataset(dataset_name,args):
         indices = random.sample(range(len(eval_data)), min(args.traj_num,len(eval_data)))#*2
     # create dataset subset
     subset = Subset(eval_data, indices)
-    dataloader = DataLoader(subset, batch_size=yaml_config['eval_batch_size'], collate_fn=collate_fn_infer_traj_vq)
+    collate_fn = collate_fn_infer_perturb_vq if args.infer_type in ('perturb_tahoe', 'perturb_h5ad') else collate_fn_infer_traj_vq
+    dataloader = DataLoader(subset, batch_size=yaml_config['eval_batch_size'], collate_fn=collate_fn, num_workers=yaml_config.get('eval_num_workers', 4))
     
     print("Step 3: Converting DataLoader to list...")
-    data_list = list(dataloader)
+    data_list = list(tqdm(dataloader, desc="Loading batches"))
     
     num_gpus = torch.cuda.device_count()
     batch_size_per_gpu = len(data_list) // num_gpus
@@ -178,10 +181,40 @@ if __name__ == "__main__":
         required=False,
         help="Number of trajectories to generate. when infer_type==perturb, this is the testset batch number."
     )
+    parser.add_argument(
+        "--smiles",
+        type=str,
+        default=None,
+        required=False,
+        help="SMILES string for perturb_tahoe_h5ad mode (overrides config if provided)."
+    )
+    parser.add_argument(
+        "--h5ad_path",
+        type=str,
+        default=None,
+        required=False,
+        help="Path to h5ad file for perturb_tahoe_h5ad mode (overrides config if provided)."
+    )
+    parser.add_argument(
+        "--dose",
+        type=str,
+        default=None,
+        required=False,
+        choices=["dose_0.0", "dose_0.05", "dose_0.5", "dose_5.0"],
+        help="Dose token for perturb_tahoe_h5ad mode (overrides config if provided)."
+    )
 
     args = parser.parse_args()
     yaml_path = args.config_file
     yaml_config = load_yaml_config(yaml_path)
+
+    # CLI overrides for perturb_tahoe_h5ad mode
+    if args.smiles is not None:
+        yaml_config["smiles"] = args.smiles
+    if args.h5ad_path is not None:
+        yaml_config["h5ad_path"] = args.h5ad_path
+    if args.dose is not None:
+        yaml_config["dose"] = args.dose
 
     # simplified experiment record
     experiment_data = {
@@ -233,6 +266,20 @@ if __name__ == "__main__":
             _, datasets_dict = initialize_datasets_from_config_h5ad(dataset_config, skip_train=True)
         elif args.infer_type == 'trajectory_perturb_h5ad':
             _, datasets_dict = initialize_datasets_from_config_h5ad_traj(dataset_config, skip_train=True)
+        elif args.infer_type == 'perturb_tahoe':
+            dataset_config["drug_emb_paths"] = yaml_config.get("drug_emb_paths", [])
+            dataset_config["repeat_per_pair"] = yaml_config.get("repeat_per_pair", 1)
+            dataset_config["pairs_mode"] = yaml_config.get("pairs_mode", "testB_subset")
+            _, datasets_dict = initialize_datasets_from_config_perturb(dataset_config, skip_train=True)
+        elif args.infer_type == 'perturb_h5ad':
+            dataset_config["drug_emb_paths"] = yaml_config.get("drug_emb_paths", [])
+            dataset_config["drug_emb_dim"] = yaml_config.get("drug_emb_dim", 1024)
+            dataset_config["h5ad_path"] = yaml_config["h5ad_path"]
+            dataset_config["smiles"] = yaml_config["smiles"]
+            dataset_config["plate"] = yaml_config.get("plate", "unknown_plate")
+            dataset_config["cell_line"] = yaml_config.get("cell_line", "unknown_cell_line")
+            dataset_config["dose"] = yaml_config.get("dose", "dose_0.0")
+            _, datasets_dict = initialize_datasets_from_config_perturb_h5ad(dataset_config, skip_train=True)
         else:
             raise ValueError('infer_type not supported')
         
